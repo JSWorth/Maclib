@@ -1330,6 +1330,76 @@ local Themes = {
 	},
 }
 
+--- Known executors, sourced from the WEAO tracker's exploit list (https://weao.gg).
+--- Colours approximate each brand's accent - tweak freely, nothing depends on them.
+local ExecutorColors = {
+	-- Windows (WEAO)
+	wave        = Color3.fromRGB( 56, 148, 255),
+	volt        = Color3.fromRGB(150,  90, 255),
+	solara      = Color3.fromRGB(255, 168,  60),
+	xeno        = Color3.fromRGB( 60, 220, 160),
+	potassium   = Color3.fromRGB(185, 150, 255),
+	photon      = Color3.fromRGB(255, 220,  90),
+	sirhurt     = Color3.fromRGB(235,  70,  90),
+	matrixhub   = Color3.fromRGB( 70, 230, 110),
+	ronin       = Color3.fromRGB(230,  60,  70),
+	melatonin   = Color3.fromRGB(120, 110, 235),
+	cosmic      = Color3.fromRGB(225, 100, 220),
+	real        = Color3.fromRGB(225, 225, 235),
+	dx9ware     = Color3.fromRGB(255, 140,  50),
+	velocity    = Color3.fromRGB( 70, 190, 255),
+	volcano     = Color3.fromRGB(255,  95,  55),
+	serotonin   = Color3.fromRGB(255, 120, 175),
+	synapsez    = Color3.fromRGB( 95, 130, 255),
+	lumen       = Color3.fromRGB(255, 205, 120),
+	matcha      = Color3.fromRGB(140, 200,  90),
+	seliware    = Color3.fromRGB( 60, 205, 195),
+	severe      = Color3.fromRGB(200,  45,  60),
+	rbxcli      = Color3.fromRGB(110, 220, 130),
+	madium      = Color3.fromRGB(160, 110, 240),
+	-- cross platform / also common in the wild
+	delta       = Color3.fromRGB(110, 120, 255),
+	codex       = Color3.fromRGB( 90, 210, 140),
+	vegax       = Color3.fromRGB(150, 190, 255),
+	macsploit   = Color3.fromRGB(200, 200, 210),
+	opiumware   = Color3.fromRGB(140,  80, 200),
+	zenith      = Color3.fromRGB(  0, 200, 220),
+	swift       = Color3.fromRGB(255, 110,  90),
+	krnl        = Color3.fromRGB(255, 150,  60),
+	fluxus      = Color3.fromRGB( 80, 210, 235),
+	hydrogen    = Color3.fromRGB(120, 190, 255),
+	arceusx     = Color3.fromRGB(255, 190,  70),
+	nihon       = Color3.fromRGB(240,  80,  90),
+	bunni       = Color3.fromRGB(255, 150, 200),
+	argon       = Color3.fromRGB(110, 200, 255),
+	ronix       = Color3.fromRGB(120, 140, 255),
+	awp         = Color3.fromRGB(180, 230,  80),
+	comet       = Color3.fromRGB( 90, 220, 230),
+	nezur       = Color3.fromRGB(150, 100, 240),
+	jjsploit    = Color3.fromRGB(250, 180,  60),
+	cryptic     = Color3.fromRGB( 60, 200, 170),
+	luna        = Color3.fromRGB(190, 210, 255),
+}
+
+--- Resolves an identifyexecutor() string to a display label and a brand colour.
+--- Falls back to a neutral grey for anything unrecognised.
+local function resolveExecutor(raw)
+	local pretty = tostring(raw or "Unknown")
+	local key = pretty:lower():gsub("[^%w]", "")
+	if key == "" then return pretty, nil end
+	local color = ExecutorColors[key]
+	if not color then
+		-- tolerate suffixes and decorations, e.g. "Wave 2.4" or "Xeno (v1)"
+		for name, c in pairs(ExecutorColors) do
+			if #name >= 4 and key:find(name, 1, true) then
+				color = c
+				break
+			end
+		end
+	end
+	return pretty, color
+end
+
 local Traffic = {
 	Red    = Color3.fromRGB(255, 95, 87),
 	Yellow = Color3.fromRGB(255, 189, 46),
@@ -1511,6 +1581,9 @@ do
 	end
 end
 
+MacLib.ExecutorColors = ExecutorColors
+MacLib.ResolveExecutor = function(_, raw) return resolveExecutor(raw) end
+
 MacLib.Theme = Themes.Dark
 MacLib.Util = Util
 MacLib.Themes = Themes
@@ -1662,6 +1735,20 @@ function MacLib:Window(config)
 		Parent = main,
 		Theme = { BackgroundColor3 = "Titlebar" },
 	})
+	Util.Corner(12, titlebar)
+	-- ClipsDescendants clips to a rectangle, not to the parent's corner radius, so an
+	-- opaque square child squares off the window. Round the bar and mask the edge that
+	-- should stay flat instead.
+	Util.New("Frame", {
+		Name = "SquareOff",
+		Size = UDim2.new(1, 0, 0, 14),
+		Position = UDim2.new(0, 0, 1, -14),
+		BackgroundColor3 = theme.Titlebar,
+		BorderSizePixel = 0,
+		ZIndex = 6,
+		Parent = titlebar,
+		Theme = { BackgroundColor3 = "Titlebar" },
+	})
 	Util.New("Frame", {
 		Name = "Hairline",
 		Size = UDim2.new(1, 0, 0, 1),
@@ -1807,6 +1894,26 @@ function MacLib:Window(config)
 		Parent = body,
 		Theme = { BackgroundColor3 = "Sidebar" },
 	})
+	Util.Corner(12, sidebar)
+	Util.New("Frame", {
+		Name = "SquareOffTop",
+		Size = UDim2.new(1, 0, 0, 14),
+		BackgroundColor3 = theme.Sidebar,
+		BorderSizePixel = 0,
+		ZIndex = 3,
+		Parent = sidebar,
+		Theme = { BackgroundColor3 = "Sidebar" },
+	})
+	Util.New("Frame", {
+		Name = "SquareOffRight",
+		Size = UDim2.new(0, 14, 1, 0),
+		Position = UDim2.new(1, -14, 0, 0),
+		BackgroundColor3 = theme.Sidebar,
+		BorderSizePixel = 0,
+		ZIndex = 3,
+		Parent = sidebar,
+		Theme = { BackgroundColor3 = "Sidebar" },
+	})
 	Util.New("Frame", {
 		Name = "Edge",
 		Size = UDim2.new(0, 1, 1, 0),
@@ -1848,30 +1955,25 @@ function MacLib:Window(config)
 		Parent = footer,
 		Theme = { BackgroundColor3 = "Divider" },
 	})
-	local footDot = Util.New("Frame", {
-		Size = UDim2.fromOffset(7, 7),
-		Position = UDim2.new(0, 14, 0.5, 0),
-		AnchorPoint = Vector2.new(0, 0.5),
-		BackgroundColor3 = Env.IsExecutor and Traffic.Green or Traffic.Yellow,
-		BorderSizePixel = 0,
-		ZIndex = 5,
-		Parent = footer,
-	})
-	Util.Corner(4, footDot)
-	Util.New("TextLabel", {
-		Size = UDim2.new(1, -30, 1, 0),
-		Position = UDim2.new(0, 27, 0, 0),
+	local exeName, exeColor = resolveExecutor(Env.IsExecutor and Env.Executor or "LocalScript")
+	local exeLabel = Util.New("TextLabel", {
+		Name = "Executor",
+		Size = UDim2.new(1, -24, 1, 0),
+		Position = UDim2.new(0, 13, 0, 0),
 		BackgroundTransparency = 1,
-		Text = Env.Executor,
+		Text = "[ " .. exeName .. " ]",
 		TextSize = 11,
-		TextColor3 = theme.Muted,
+		TextColor3 = exeColor or theme.Muted,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextTruncate = Enum.TextTruncate.AtEnd,
-		Weight = Enum.FontWeight.Medium,
+		Weight = Enum.FontWeight.Bold,
 		ZIndex = 5,
 		Parent = footer,
-		Theme = { TextColor3 = "Muted" },
 	})
+	if not exeColor then
+		Util.Bind(exeLabel, "TextColor3", "Muted")
+	end
+	self.ExecutorColor = exeColor
 
 	local container = Util.New("Frame", {
 		Name = "Container",
@@ -2522,10 +2624,27 @@ function Section:_Row(opts)
 	end
 
 	local textWidth = opts.TextWidth or -132
+
+	-- Vertical placement: a single-line row centres its label so the padding above and
+	-- below always matches, whatever height the caller asked for. Rows that stack extra
+	-- controls underneath (sliders) pass an explicit TitleY instead.
+	local titleAnchor, titlePos
+	if hasDesc then
+		titleAnchor = Vector2.new(0, 0)
+		titlePos = UDim2.new(0, 15, 0, opts.TitleY or 11)
+	elseif opts.TitleY then
+		titleAnchor = Vector2.new(0, 0)
+		titlePos = UDim2.new(0, 15, 0, opts.TitleY)
+	else
+		titleAnchor = Vector2.new(0, 0.5)
+		titlePos = UDim2.new(0, 15, 0.5, 0)
+	end
+
 	local title = Util.New("TextLabel", {
 		Name = "Title",
 		Size = UDim2.new(1, textWidth, 0, 16),
-		Position = UDim2.new(0, 15, 0, hasDesc and 11 or 12),
+		AnchorPoint = titleAnchor,
+		Position = titlePos,
 		BackgroundTransparency = 1,
 		Text = tostring(opts.Title or ""),
 		TextSize = 13,
@@ -2543,7 +2662,7 @@ function Section:_Row(opts)
 		desc = Util.New("TextLabel", {
 			Name = "Description",
 			Size = UDim2.new(1, textWidth, 0, 14),
-			Position = UDim2.new(0, 15, 0, 29),
+			Position = UDim2.new(0, 15, 0, opts.DescY or 29),
 			BackgroundTransparency = 1,
 			Text = tostring(opts.Description),
 			TextSize = 11,
@@ -2609,6 +2728,7 @@ function Section:Button(cfg)
 		Parent = row,
 		Theme = { BackgroundColor3 = "ElementHover" },
 	})
+	Util.Corner(9, hit)
 
 	local chev = Util.New("ImageLabel", {
 		Size = UDim2.fromOffset(15, 15),
@@ -2716,10 +2836,12 @@ function Section:Slider(cfg)
 	cfg = cfg or {}
 	local theme = MacLib.Theme
 	local hasDesc = cfg.Description ~= nil and cfg.Description ~= ""
+	-- padding above the title and below the bar are both 12, so the row reads balanced
 	local parts = self:_Row({
 		Title = cfg.Title or "Slider",
 		Description = cfg.Description,
-		Height = hasDesc and 76 or 60,
+		Height = hasDesc and 74 or 60,
+		TitleY = hasDesc and 11 or 12,
 		TextWidth = -110,
 	})
 	local row = parts.Row
@@ -2733,7 +2855,7 @@ function Section:Slider(cfg)
 	local valueLabel = Util.New("TextLabel", {
 		Name = "Value",
 		Size = UDim2.new(0, 92, 0, 16),
-		Position = UDim2.new(1, -15, 0, hasDesc and 11 or 12),
+		Position = UDim2.new(1, -15, 0, hasDesc and 11 or 12),  -- matches TitleY
 		AnchorPoint = Vector2.new(1, 0),
 		BackgroundTransparency = 1,
 		Text = "0",
@@ -2746,10 +2868,10 @@ function Section:Slider(cfg)
 		Theme = { TextColor3 = "SubText" },
 	})
 
-	local barY = hasDesc and 56 or 40
+	local barY = hasDesc and 51 or 36
 	local bar = Util.New("TextButton", {
 		Name = "Bar",
-		Size = UDim2.new(1, -30, 0, 14),
+		Size = UDim2.new(1, -30, 0, 12),
 		Position = UDim2.new(0, 15, 0, barY),
 		BackgroundTransparency = 1,
 		AutoButtonColor = false,
