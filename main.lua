@@ -4,7 +4,9 @@
 	MacLib  ~  a clean, sleek macOS-flavoured UI library for Roblox
 	------------------------------------------------------------------
 	Version : 1.0.0
-	Usage   : local MacLib = loadstring(game:HttpGet("<raw-url-to-this-file>"))()
+	Source  : https://github.com/JSWorth/Maclib
+	Usage   : local MacLib = loadstring(game:HttpGet(
+	              "https://raw.githubusercontent.com/JSWorth/Maclib/main/main.lua"))()
 
 	Icons    : Solar Icon Set  (https://solar-icons.vercel.app)
 	           Fetched at runtime through the executor `request({})` function,
@@ -983,6 +985,7 @@ do
 		globe    = S1 .. '<circle cx="12" cy="12" r="8.8"/><path d="M3.4 12h17.2M12 3.2c2.3 2.4 3.5 5.5 3.5 8.8s-1.2 6.4-3.5 8.8c-2.3-2.4-3.5-5.5-3.5-8.8S9.7 5.6 12 3.2Z"/>' .. S2,
 		moon     = S1 .. '<path d="M20.2 14.6A8.7 8.7 0 0 1 9.4 3.8a8.9 8.9 0 1 0 10.8 10.8Z"/>' .. S2,
 		sun      = S1 .. '<circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M21.2 12h-2.4M5.2 12H2.8M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7M18.5 18.5l-1.7-1.7M7.2 7.2 5.5 5.5"/>' .. S2,
+		scaling  = S1 .. '<path d="M20.4 9.6V3.6h-6M3.6 14.4v6h6M20.4 3.6 13.4 10.6M3.6 20.4l7-7"/>' .. S2,
 		["chevron-down"]  = S1 .. '<path d="m7 10 5 5 5-5"/>' .. S2,
 		["chevron-right"] = S1 .. '<path d="m10 7 5 5-5 5"/>' .. S2,
 		["chevron-up"]    = S1 .. '<path d="m7 14 5-5 5 5"/>' .. S2,
@@ -1024,6 +1027,8 @@ do
 		["trash-bin-trash"] = "trash", ["trash-bin-minimalistic"] = "trash",
 		["refresh-circle"] = "refresh", ["restart"] = "refresh", ["refresh-square"] = "refresh",
 		["global"] = "globe", ["planet"] = "globe", ["earth"] = "globe",
+		["scale"] = "scaling", ["resize"] = "scaling", ["maximize"] = "scaling",
+		["full-screen"] = "scaling", ["quit-full-screen"] = "scaling", ["expand"] = "scaling",
 		["moon-stars"] = "moon", ["moon-sleep"] = "moon", ["moon-fog"] = "moon",
 		["sun-2"] = "sun", ["sun-fog"] = "sun", ["sunrise"] = "sun", ["black-hole"] = "sun",
 		["alt-arrow-down"] = "chevron-down", ["arrow-down"] = "chevron-down", ["double-alt-arrow-down"] = "chevron-down",
@@ -1445,22 +1450,42 @@ do
 		return inst
 	end
 
-	--- macOS-ish soft drop shadow behind a frame.
-	function Util.Shadow(parent, spread, transparency)
-		local img = Instance.new("ImageLabel")
-		img.Name = "Shadow"
-		img.BackgroundTransparency = 1
-		img.Image = "rbxassetid://6014261993"
-		img.ImageTransparency = transparency or 0.5
-		img.ScaleType = Enum.ScaleType.Slice
-		img.SliceCenter = Rect.new(49, 49, 450, 450)
-		img.AnchorPoint = Vector2.new(0.5, 0.5)
-		img.Position = UDim2.new(0.5, 0, 0.5, 4)
-		img.Size = UDim2.new(1, spread or 60, 1, spread or 60)
-		img.ZIndex = 0
-		img.Parent = parent
-		ThemeBindings[#ThemeBindings + 1] = { img, "ImageColor3", "Shadow" }
-		return img
+	--- macOS-ish soft drop shadow, built from stacked rounded frames.
+	--- Asset-free on purpose: uploaded shadow images get moderated and then render as
+	--- a flat grey rectangle, which is worse than no shadow at all.
+	function Util.Shadow(parent, spread, strength, radius)
+		spread   = spread or 50
+		strength = strength or 1
+		radius   = radius or 12
+
+		local holder = Util.New("Frame", {
+			Name = "Shadow",
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromScale(1, 1),
+			BackgroundTransparency = 1,
+			ZIndex = 0,
+			Parent = parent,
+		})
+
+		local layers = 5
+		for i = 1, layers do
+			local grow = spread * (i / layers)
+			local falloff = 1 - (i - 1) / layers
+			local f = Util.New("Frame", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.new(0.5, 0, 0.5, math.floor(grow * 0.22)),
+				Size = UDim2.new(1, grow, 1, grow),
+				BackgroundColor3 = MacLib.Theme.Shadow,
+				BackgroundTransparency = 1 - (strength * 0.2 * falloff),
+				BorderSizePixel = 0,
+				ZIndex = 0,
+				Parent = holder,
+				Theme = { BackgroundColor3 = "Shadow" },
+			})
+			Util.Corner(math.floor(radius + grow / 2), f)
+		end
+		return holder
 	end
 
 	function Util.Hoverable(button, target, normalKey, hoverKey)
@@ -1609,7 +1634,7 @@ function MacLib:Window(config)
 	})
 	self.Root = root
 
-	Util.Shadow(root, 70, 0.42)
+	Util.Shadow(root, 64, 1, 12)
 
 	local main = Util.New("Frame", {
 		Name = "Main",
@@ -1659,7 +1684,7 @@ function MacLib:Window(config)
 	})
 	Util.List(lights, 8, Enum.FillDirection.Horizontal)
 
-	local function makeLight(color, order, glyph)
+	local function makeLight(color, order)
 		local btn = Util.New("TextButton", {
 			Size = UDim2.fromOffset(13, 13),
 			BackgroundColor3 = color,
@@ -1671,25 +1696,19 @@ function MacLib:Window(config)
 			Parent = lights,
 		})
 		Util.Corner(7, btn)
-		local mark = Util.New("TextLabel", {
-			Size = UDim2.fromScale(1, 1),
-			BackgroundTransparency = 1,
-			Text = glyph,
-			TextSize = 9,
-			TextColor3 = Color3.fromRGB(20, 20, 20),
-			TextTransparency = 1,
-			ZIndex = 9,
-			Weight = Enum.FontWeight.Bold,
-			Parent = btn,
-		})
-		lights.MouseEnter:Connect(function() Util.Tween(mark, 0.12, { TextTransparency = 0.15 }) end)
-		lights.MouseLeave:Connect(function() Util.Tween(mark, 0.12, { TextTransparency = 1 }) end)
+		-- no hover glyphs: plain dots read cleaner at this size
+		btn.MouseEnter:Connect(function()
+			Util.Tween(btn, 0.12, { BackgroundColor3 = color:Lerp(Color3.new(0, 0, 0), 0.18) })
+		end)
+		btn.MouseLeave:Connect(function()
+			Util.Tween(btn, 0.16, { BackgroundColor3 = color })
+		end)
 		return btn
 	end
 
-	local closeBtn = makeLight(Traffic.Red, 1, "\u{00D7}")
-	local minBtn   = makeLight(Traffic.Yellow, 2, "\u{2212}")
-	local maxBtn   = makeLight(Traffic.Green, 3, "\u{21F1}")
+	local closeBtn = makeLight(Traffic.Red, 1)
+	local minBtn   = makeLight(Traffic.Yellow, 2)
+	local maxBtn   = makeLight(Traffic.Green, 3)
 
 	local titleWrap = Util.New("Frame", {
 		Name = "TitleWrap",
@@ -1931,26 +1950,33 @@ function MacLib:Window(config)
 	do
 		local grip = Util.New("TextButton", {
 			Name = "Resize",
-			Size = UDim2.fromOffset(18, 18),
-			Position = UDim2.new(1, -18, 1, -18),
+			Size = UDim2.fromOffset(24, 24),
+			Position = UDim2.new(1, -24, 1, -24),
 			BackgroundTransparency = 1,
 			Text = "",
 			AutoButtonColor = false,
 			ZIndex = 30,
 			Parent = main,
 		})
-		for i = 1, 3 do
-			Util.New("Frame", {
-				Size = UDim2.fromOffset(2, 2),
-				Position = UDim2.new(0, 13 - (i - 1) * 4, 0, 13),
-				BackgroundColor3 = theme.Muted,
-				BackgroundTransparency = 0.35,
-				BorderSizePixel = 0,
-				ZIndex = 31,
-				Parent = grip,
-				Theme = { BackgroundColor3 = "Muted" },
-			})
-		end
+		local gripIcon = Util.New("ImageLabel", {
+			Name = "GripIcon",
+			Size = UDim2.fromOffset(15, 15),
+			Position = UDim2.fromScale(0.5, 0.5),
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundTransparency = 1,
+			ImageColor3 = theme.SubText,
+			ImageTransparency = 1,
+			ZIndex = 31,
+			Parent = grip,
+			Theme = { ImageColor3 = "SubText" },
+		})
+		Icons.Apply(gripIcon, "scaling", self.IconStyle, gripIcon, theme.SubText)
+		grip.MouseEnter:Connect(function()
+			Util.Tween(gripIcon, 0.12, { Size = UDim2.fromOffset(17, 17) })
+		end)
+		grip.MouseLeave:Connect(function()
+			Util.Tween(gripIcon, 0.16, { Size = UDim2.fromOffset(15, 15) })
+		end)
 		local resizing, startIn, startSize = false, nil, nil
 		grip.InputBegan:Connect(function(input)
 			if input.UserInputType == Enum.UserInputType.MouseButton1
@@ -1983,6 +2009,7 @@ function MacLib:Window(config)
 	-- traffic light behaviour
 	----------------------------------------------------------------------------------------------
 	local minimizedChip
+	local blur
 
 	local function buildChip()
 		local chip = Util.New("TextButton", {
@@ -2000,7 +2027,7 @@ function MacLib:Window(config)
 		})
 		Util.Corner(11, chip)
 		Util.Stroke(chip, "WindowStroke", 1, 0.4)
-		Util.Shadow(chip, 40, 0.55)
+		Util.Shadow(chip, 34, 1, 11)
 		local dot = Util.New("Frame", {
 			Size = UDim2.fromOffset(9, 9),
 			Position = UDim2.new(0, 13, 0.5, 0),
@@ -2049,6 +2076,7 @@ function MacLib:Window(config)
 		end
 		self.CurrentSize = UDim2.fromOffset(root.AbsoluteSize.X, root.AbsoluteSize.Y)
 		Util.Tween(root, 0.2, { Size = UDim2.fromOffset(root.AbsoluteSize.X * 0.85, 0) })
+		if blur then Util.Tween(blur, 0.2, { Size = 0 }) end
 		task.delay(0.2, function()
 			root.Visible = false
 			root.Size = self.CurrentSize or defaultSize
@@ -2064,6 +2092,7 @@ function MacLib:Window(config)
 		root.Visible = true
 		root.Size = UDim2.fromOffset((self.CurrentSize or defaultSize).X.Offset, 0)
 		Util.Tween(root, 0.26, { Size = self.CurrentSize or defaultSize })
+		if blur and self.Open then Util.Tween(blur, 0.26, { Size = 14 }) end
 	end
 
 	function self:Maximize()
@@ -2086,7 +2115,6 @@ function MacLib:Window(config)
 	----------------------------------------------------------------------------------------------
 	-- open / close
 	----------------------------------------------------------------------------------------------
-	local blur
 	if config.Blur ~= false then
 		local ok = pcall(function()
 			blur = Instance.new("BlurEffect")
@@ -2104,6 +2132,10 @@ function MacLib:Window(config)
 
 	function self:SetOpen(state, instant)
 		self.Open = state
+		if state and self.Minimized then
+			self:Restore()
+			return
+		end
 		if state then
 			root.Visible = true
 			if instant then
@@ -2643,19 +2675,7 @@ function Section:Toggle(cfg)
 		Theme = { BackgroundColor3 = "Knob" },
 	})
 	Util.Corner(11, knob)
-	local knobShadow = Util.New("ImageLabel", {
-		BackgroundTransparency = 1,
-		Image = "rbxassetid://6014261993",
-		ImageTransparency = 0.65,
-		ImageColor3 = Color3.new(0, 0, 0),
-		ScaleType = Enum.ScaleType.Slice,
-		SliceCenter = Rect.new(49, 49, 450, 450),
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.new(0.5, 0, 0.5, 1),
-		Size = UDim2.new(1, 14, 1, 14),
-		ZIndex = 6,
-		Parent = knob,
-	})
+	Util.Stroke(knob, "Divider", 1, 0.55)
 
 	local element = { Type = "Toggle", Instance = row, Value = false }
 
@@ -3470,7 +3490,7 @@ function MacLib:Notify(cfg)
 		Parent = card,
 	})
 	Util.List(text, 3)
-	Util.Padding(text, 0, 0, 15, 0)
+	Util.Padding(text, 0, 0, 20, 0)
 
 	Util.New("TextLabel", {
 		Size = UDim2.new(1, 0, 0, 16),
@@ -3505,15 +3525,28 @@ function MacLib:Notify(cfg)
 	end
 
 	local duration = cfg.Duration or cfg.Lifetime or 5
-	local progress = Util.New("Frame", {
-		Size = UDim2.new(1, 0, 0, 2),
-		Position = UDim2.new(0, 0, 1, -2),
-		BackgroundColor3 = theme.Accent,
+	-- inset so it never collides with the card's rounded corners
+	local progressTrack = Util.New("Frame", {
+		Name = "ProgressTrack",
+		Size = UDim2.new(1, -26, 0, 3),
+		Position = UDim2.new(0, 13, 1, -10),
+		BackgroundColor3 = theme.Track,
+		BackgroundTransparency = 0.5,
 		BorderSizePixel = 0,
 		ZIndex = 4,
 		Parent = card,
+		Theme = { BackgroundColor3 = "Track" },
+	})
+	Util.Corner(2, progressTrack)
+	local progress = Util.New("Frame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = theme.Accent,
+		BorderSizePixel = 0,
+		ZIndex = 5,
+		Parent = progressTrack,
 		Theme = { BackgroundColor3 = "Accent" },
 	})
+	Util.Corner(2, progress)
 
 	local closed = false
 	local function close()
@@ -3545,7 +3578,7 @@ function MacLib:Notify(cfg)
 
 	card.Position = UDim2.fromOffset(46, 0)
 	Util.Tween(card, 0.34, { Position = UDim2.fromOffset(0, 0) }, Enum.EasingStyle.Quint)
-	Util.Tween(progress, duration, { Size = UDim2.new(0, 0, 0, 2) }, Enum.EasingStyle.Linear)
+	Util.Tween(progress, duration, { Size = UDim2.fromScale(0, 1) }, Enum.EasingStyle.Linear)
 	task.delay(duration, close)
 
 	return { Close = close, Instance = card, Slot = slot }
@@ -3805,3 +3838,385 @@ MacLib.Http  = Http
 MacLib.Env   = Env
 
 return MacLib
+
+--[==[
+=================================================================================================
+  EXAMPLE SCRIPT
+  Everything below is a comment so it will not run when the library is loaded.
+  Copy it into its own script to try it out.
+=================================================================================================
+
+--=================================================================================================
+--  EXAMPLE  ~  everything MacLib can do
+--
+--  Source: https://github.com/JSWorth/Maclib/blob/main/main.lua
+--  Note the raw.githubusercontent.com host below - the github.com/blob/ URL serves the
+--  syntax-highlighted HTML page, not the Lua, so HttpGet on it will not compile.
+--=================================================================================================
+
+local MacLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/JSWorth/Maclib/main/main.lua"))()
+
+--=================================================================================================
+--  WINDOW
+--=================================================================================================
+
+local Window = MacLib:Window({
+	Title     = "Aurora",
+	Subtitle  = "v2.4.0  •  Universal",
+	Size      = UDim2.fromOffset(780, 500),
+	Theme     = "Dark",                       -- "Dark" | "Light"
+	Accent    = Color3.fromRGB(10, 132, 255), -- macOS blue
+	IconStyle = "outline",                    -- linear | outline | bold | broken | bold-duotone
+	ToggleKey = Enum.KeyCode.RightShift,
+	Folder    = "Aurora",                     -- where configs are written
+	Blur      = true,
+})
+
+--=================================================================================================
+--  SIDEBAR GROUPS + TABS
+--  Icon names come straight from the Solar set (https://solar-icons.vercel.app).
+--=================================================================================================
+
+local General = Window:TabSection("General")
+
+local HomeTab    = General:Tab({ Title = "Home",    Icon = "home-2" })
+local PlayerTab  = General:Tab({ Title = "Player",  Icon = "user-rounded" })
+local VisualsTab = General:Tab({ Title = "Visuals", Icon = "palette" })
+
+local Combat = Window:TabSection("Combat")
+
+local AimTab  = Combat:Tab({ Title = "Aim Assist", Icon = "bolt" })
+local ESPTab  = Combat:Tab({ Title = "ESP",        Icon = "eye" })
+
+local System = Window:TabSection("System")
+
+local ConfigTab   = System:Tab({ Title = "Configs",  Icon = "folder" })
+local SettingsTab = System:Tab({ Title = "Settings", Icon = "settings-minimalistic" })
+
+--=================================================================================================
+--  HOME
+--=================================================================================================
+
+local welcome = HomeTab:Section({ Title = "Welcome" })
+
+welcome:Paragraph({
+	Title = "Aurora is loaded",
+	Description = "Everything below is live. Press Right Shift to hide the window, drag the "
+		.. "title bar to move it, and grab the bottom-right corner to resize.",
+})
+
+welcome:Button({
+	Title = "Open the changelog",
+	Description = "Shows a macOS style alert sheet",
+	Callback = function()
+		Window:Dialog({
+			Title = "What's new in 2.4.0",
+			Description = "Rebuilt the icon pipeline, added multi-select dropdowns and "
+				.. "reworked config saving.",
+			Buttons = {
+				{ Title = "Not now" },
+				{ Title = "Got it", Primary = true, Callback = function()
+					Window:Notify({ Title = "Nice", Description = "Enjoy the update.", Icon = "check-circle" })
+				end },
+			},
+		})
+	end,
+})
+
+welcome:Button({
+	Title = "Send a test notification",
+	Callback = function()
+		Window:Notify({
+			Title = "Heads up",
+			Description = "This toast dismisses itself in five seconds, or click it to close.",
+			Icon = "bell",
+			Duration = 5,
+		})
+	end,
+})
+
+local status = HomeTab:Section({ Title = "Status", Description = "Values update in real time." })
+
+local fpsLabel = status:Label("FPS: --")
+local pingLabel = status:Label("Ping: --")
+
+task.spawn(function()
+	local RunService = game:GetService("RunService")
+	local Stats = game:GetService("Stats")
+	while task.wait(1) do
+		fpsLabel:Set(("FPS: %d"):format(math.floor(1 / RunService.RenderStepped:Wait())))
+		local ok, ping = pcall(function()
+			return math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue())
+		end)
+		pingLabel:Set("Ping: " .. (ok and (ping .. " ms") or "--"))
+	end
+end)
+
+--=================================================================================================
+--  PLAYER
+--=================================================================================================
+
+local movement = PlayerTab:Section({ Title = "Movement" })
+
+movement:Toggle({
+	Title = "Infinite jump",
+	Description = "Jump again while airborne",
+	Default = false,
+	Flag = "player.infjump",
+	Callback = function(state)
+		print("[Aurora] infinite jump:", state)
+	end,
+})
+
+movement:Slider({
+	Title = "Walk speed",
+	Description = "Applied to your humanoid",
+	Min = 16, Max = 250, Default = 16, Increment = 1, Suffix = " studs/s",
+	Flag = "player.walkspeed",
+	Callback = function(value)
+		local char = game.Players.LocalPlayer.Character
+		local hum = char and char:FindFirstChildWhichIsA("Humanoid")
+		if hum then hum.WalkSpeed = value end
+	end,
+})
+
+movement:Slider({
+	Title = "Jump power",
+	Min = 50, Max = 500, Default = 50, Suffix = " studs",
+	Flag = "player.jumppower",
+	Callback = function(value)
+		local char = game.Players.LocalPlayer.Character
+		local hum = char and char:FindFirstChildWhichIsA("Humanoid")
+		if hum then hum.UseJumpPower = true hum.JumpPower = value end
+	end,
+})
+
+movement:Divider()
+
+movement:Keybind({
+	Title = "Speed boost",
+	Description = "Hold to sprint",
+	Default = Enum.KeyCode.LeftShift,
+	Flag = "player.sprintkey",
+	Callback = function(key)
+		print("[Aurora] sprint pressed:", key.Name)
+	end,
+	OnChanged = function(key)
+		print("[Aurora] sprint rebound to:", key and key.Name or "nothing")
+	end,
+})
+
+local character = PlayerTab:Section({ Title = "Character" })
+
+character:Dropdown({
+	Title = "Movement mode",
+	Options = { "Default", "Flight", "Noclip", "Spider" },
+	Default = "Default",
+	Flag = "player.mode",
+	Callback = function(mode)
+		print("[Aurora] mode:", mode)
+	end,
+})
+
+character:Input({
+	Title = "Teleport to player",
+	Placeholder = "username",
+	Flag = "player.tptarget",
+	Callback = function(text, pressedEnter)
+		if pressedEnter then print("[Aurora] teleporting to", text) end
+	end,
+})
+
+--=================================================================================================
+--  VISUALS
+--=================================================================================================
+
+local world = VisualsTab:Section({ Title = "World" })
+
+world:Toggle({
+	Title = "Fullbright",
+	Default = false,
+	Flag = "visuals.fullbright",
+	Callback = function(on)
+		game:GetService("Lighting").Ambient = on and Color3.new(1, 1, 1) or Color3.new(0, 0, 0)
+	end,
+})
+
+world:Slider({
+	Title = "Field of view",
+	Min = 40, Max = 120, Default = 70, Suffix = "\u{00B0}",
+	Flag = "visuals.fov",
+	Callback = function(v)
+		local cam = workspace.CurrentCamera
+		if cam then cam.FieldOfView = v end
+	end,
+})
+
+world:Dropdown({
+	Title = "Removed effects",
+	Description = "Multi-select",
+	Options = { "Blur", "Bloom", "Sun rays", "Colour correction", "Depth of field" },
+	Multi = true,
+	Default = { "Blur", "Sun rays" },
+	Flag = "visuals.removed",
+	Callback = function(list)
+		print("[Aurora] removing:", table.concat(list, ", "))
+	end,
+})
+
+--=================================================================================================
+--  COMBAT
+--=================================================================================================
+
+local aim = AimTab:Section({ Title = "Aim assist" })
+
+aim:Toggle({ Title = "Enabled", Default = false, Flag = "aim.enabled" })
+aim:Slider({ Title = "Smoothing", Min = 0, Max = 1, Default = 0.35, Decimals = 2, Flag = "aim.smooth" })
+aim:Slider({ Title = "FOV radius", Min = 20, Max = 600, Default = 140, Suffix = " px", Flag = "aim.fov" })
+aim:Dropdown({
+	Title = "Target part",
+	Options = { "Head", "UpperTorso", "HumanoidRootPart" },
+	Default = "Head",
+	Flag = "aim.part",
+})
+aim:Keybind({ Title = "Hold key", Default = Enum.KeyCode.C, Flag = "aim.key" })
+
+local esp = ESPTab:Section({ Title = "Players" })
+
+esp:Toggle({ Title = "Boxes", Default = true, Flag = "esp.boxes" })
+esp:Toggle({ Title = "Names", Default = true, Flag = "esp.names" })
+esp:Toggle({ Title = "Health bars", Default = false, Flag = "esp.health" })
+esp:Toggle({ Title = "Tracers", Description = "Draw a line from the bottom of the screen",
+	Default = false, Flag = "esp.tracers" })
+esp:Slider({ Title = "Max distance", Min = 100, Max = 5000, Default = 1500,
+	Increment = 50, Suffix = " studs", Flag = "esp.distance" })
+
+--=================================================================================================
+--  CONFIGS
+--=================================================================================================
+
+local cfgSection = ConfigTab:Section({
+	Title = "Configuration",
+	Description = "Configs are written to your executor's workspace folder.",
+})
+
+local nameBox = cfgSection:Input({ Title = "Config name", Placeholder = "default", Default = "default" })
+
+local configList = cfgSection:Dropdown({
+	Title = "Saved configs",
+	Options = Window:ListConfigs(),
+	Placeholder = "None saved",
+})
+
+cfgSection:Button({
+	Title = "Save",
+	Callback = function()
+		local ok = Window:SaveConfig(nameBox:Get())
+		configList:SetOptions(Window:ListConfigs())
+		Window:Notify({
+			Title = ok and "Config saved" or "Could not save",
+			Description = ok and ("Wrote " .. nameBox:Get() .. ".json")
+				or "This environment has no file system access.",
+			Icon = ok and "check-circle" or "danger-triangle",
+		})
+	end,
+})
+
+cfgSection:Button({
+	Title = "Load",
+	Callback = function()
+		local ok = Window:LoadConfig(configList:Get() or nameBox:Get())
+		Window:Notify({
+			Title = ok and "Config loaded" or "Could not load",
+			Icon = ok and "check-circle" or "danger-triangle",
+		})
+	end,
+})
+
+cfgSection:Button({
+	Title = "Refresh list",
+	Callback = function()
+		configList:SetOptions(Window:ListConfigs())
+	end,
+})
+
+--=================================================================================================
+--  SETTINGS
+--=================================================================================================
+
+local ui = SettingsTab:Section({ Title = "Interface" })
+
+ui:Dropdown({
+	Title = "Theme",
+	Options = { "Dark", "Light" },
+	Default = "Dark",
+	Callback = function(name)
+		Window:SetTheme(name)
+	end,
+})
+
+ui:Dropdown({
+	Title = "Icon style",
+	Description = "Solar ships six weights",
+	Options = { "linear", "outline", "bold", "broken", "bold-duotone", "line-duotone" },
+	Default = "outline",
+	Callback = function(style)
+		MacLib.Icons.Style = style
+		Window:Notify({
+			Title = "Icon style set to " .. style,
+			Description = "New icons will use this weight.",
+			Icon = "palette",
+		})
+	end,
+})
+
+ui:Keybind({
+	Title = "Toggle UI",
+	Default = Enum.KeyCode.RightShift,
+	OnChanged = function(key)
+		Window.ToggleKey = key
+	end,
+})
+
+local about = SettingsTab:Section({ Title = "About" })
+
+about:Paragraph({
+	Title = "Environment",
+	Description = ("Executor: %s\nHTTP: %s\nMacLib: v%s"):format(
+		MacLib.Env.Executor,
+		MacLib.Http.Available and "available" or "unavailable (using offline icons)",
+		MacLib.Version
+	),
+})
+
+about:Button({
+	Title = "Unload Aurora",
+	Description = "Destroys the interface and disconnects everything",
+	Callback = function()
+		Window:Dialog({
+			Title = "Unload Aurora?",
+			Description = "The interface will be removed. Unsaved settings are lost.",
+			Buttons = {
+				{ Title = "Cancel" },
+				{ Title = "Unload", Primary = true, Callback = function()
+					MacLib:Unload()
+				end },
+			},
+		})
+	end,
+})
+
+--=================================================================================================
+--  READY
+--=================================================================================================
+
+HomeTab:Select()
+
+Window:Notify({
+	Title = "Aurora loaded",
+	Description = "Right Shift toggles the interface.",
+	Icon = "rocket",
+	Duration = 6,
+})
+
+]==]
