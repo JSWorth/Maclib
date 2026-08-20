@@ -1075,6 +1075,21 @@ do
 	----------------------------------------------------------------------------------------------
 	Icons.Stats = { Image = 0, Vector = 0, Failed = 0 }
 
+	--- Every icon currently on screen, so a weight change can redraw them in place.
+	Icons.Live = {}
+
+	local function remember(entry)
+		for i = #Icons.Live, 1, -1 do
+			local e = Icons.Live[i]
+			if e.Target == entry.Target then
+				table.remove(Icons.Live, i)
+			elseif typeof(e.Target) ~= "Instance" or e.Target.Parent == nil then
+				table.remove(Icons.Live, i)   -- prune icons whose label is gone
+			end
+		end
+		Icons.Live[#Icons.Live + 1] = entry
+	end
+
 	local displayMode = nil   -- "image" | "frames", decided once by probeDisplay()
 
 	local function createEditable(size)
@@ -1151,6 +1166,20 @@ do
 
 	function Icons.DisplayMode()
 		return Icons.ProbeDisplay()
+	end
+
+	--- Sets the default Solar weight AND redraws icons already on screen. Setting
+	--- Icons.Style on its own only affects icons created afterwards.
+	function Icons.SetStyle(style)
+		Icons.Style = style
+		local snapshot = {}
+		for _, e in ipairs(Icons.Live) do snapshot[#snapshot + 1] = e end
+		for _, e in ipairs(snapshot) do
+			if not e.Explicit and typeof(e.Target) == "Instance" and e.Target.Parent then
+				Icons.Apply(e.Target, e.Raw, style, e.Holder, e.Color, e.Done)
+			end
+		end
+		return style
 	end
 
 	--- Returns (content, doc). `content` is nil whenever the icon must be drawn as frames,
@@ -1253,7 +1282,10 @@ do
 		end
 		target.ImageTransparency = 1
 		if doc and holder then
-			local drawn = Icons.RenderFrames(holder, doc, color or Color3.new(1, 1, 1))
+			-- prefer the label's current tint: it tracks selection state, which a colour
+			-- captured when the icon was first requested does not
+			local tint = color or target.ImageColor3 or Color3.new(1, 1, 1)
+			local drawn = Icons.RenderFrames(holder, doc, tint)
 			if drawn and drawn > 0 then
 				Icons.Stats.Vector = Icons.Stats.Vector + 1
 				return true
@@ -1264,10 +1296,11 @@ do
 	end
 
 	--- name may be "home-2", "solar:home-2-bold", "rbxassetid://123" or a raw number.
-	function Icons.Apply(target, name, style, holder, color)
+	function Icons.Apply(target, name, style, holder, color, onDone)
 		if not target or not name or name == "" then return end
 		holder = holder or target
 		local raw = tostring(name)
+		local requested = raw
 
 		-- "builtin:<name>" skips the network entirely and uses the embedded vector set.
 		-- Used for the library's own glyphs (chevrons, ticks) which have no Solar equivalent.
@@ -1288,9 +1321,25 @@ do
 
 		local key, base = Icons.Resolve(raw, style)
 		if forceOffline then key = "builtin:" .. base end
+
+		-- an explicit weight ("solar:home-2-bold") or a builtin glyph must not be
+		-- re-styled when the user picks a different default weight
+		local _, embedded = (function()
+			local n = raw:lower()
+			for st in pairs(KNOWN_STYLES) do
+				if n:match("%-" .. st:gsub("%-", "%%-") .. "$") then return n, st end
+			end
+			return n, nil
+		end)()
+		remember({
+			Target = target, Raw = requested, Holder = holder, Color = color,
+			Done = onDone, Explicit = forceOffline or embedded ~= nil,
+		})
+
 		local cached = Icons.Cache[key]
 		if cached then
 			present(target, holder, cached.content, cached.doc, color)
+			if onDone then task.spawn(onDone) end
 			return
 		end
 
@@ -1327,6 +1376,7 @@ do
 
 			if target.Parent then
 				present(target, holder, content, doc, color)
+				if onDone then pcall(onDone) end
 			end
 		end)
 	end
@@ -2252,6 +2302,7 @@ function MacLib:Window(config)
 	end)
 
 	-- settings button, immediately left of the theme toggle
+	local paintGearRef = function() end
 	local gearBtn = Util.New("TextButton", {
 		Name = "SettingsToggle",
 		Size = UDim2.fromOffset(26, 26),
@@ -2275,7 +2326,11 @@ function MacLib:Window(config)
 		ZIndex = 9,
 		Parent = gearBtn,
 	})
-	Icons.Apply(gearIcon, "settings-minimalistic", self.IconStyle, gearIcon, theme.SubText)
+	-- deliberately not a gear: scripts using MacLib usually have their own settings tab
+	-- with a gear icon, and two gears side by side is confusing
+	Icons.Apply(gearIcon, "gamepad", self.IconStyle, gearIcon, nil, function()
+		paintGearRef(self.SettingsOpen)
+	end)
 	self.GearButton, self.GearIcon = gearBtn, gearIcon
 
 	gearBtn.MouseEnter:Connect(function()
@@ -2864,6 +2919,7 @@ function MacLib:Window(config)
 			end
 		end
 	end
+	paintGearRef = paintGear
 	table.insert(self._OnTheme, function() paintGear(self.SettingsOpen) end)
 
 	function self:OpenSettings()
@@ -2872,7 +2928,12 @@ function MacLib:Window(config)
 		if not self.SettingsPage then return end
 		self.SettingsOpen = true
 		self.PreviousTab = self.ActiveTab
-		if self.ActiveTab then self.ActiveTab.Page.Visible = false end
+		if self.ActiveTab then
+			-- this page is not one of the sidebar tabs, so nothing there should look active
+			self.ActiveTab.Page.Visible = false
+			self.ActiveTab.Selected = false
+			if self.ActiveTab._Paint then self.ActiveTab._Paint() end
+		end
 		self.EmptyLabel.Visible = false
 		if self.SyncSettings then self:SyncSettings() end
 		local page = self.SettingsPage
@@ -3061,8 +3122,12 @@ function Window:Tab(cfg)
 		ZIndex = 6,
 		Parent = iconHolder,
 	})
+	-- paint() is passed as onDone so a redraw (icon weight change) restores the
+	-- selected/unselected tint instead of leaving the fresh geometry mis-coloured
 	if cfg.Icon then
-		Icons.Apply(icon, cfg.Icon, window.IconStyle, iconHolder, theme.SubText)
+		Icons.Apply(icon, cfg.Icon, window.IconStyle, iconHolder, nil, function()
+			if tab._Paint then tab._Paint(true) end
+		end)
 	end
 
 	local label = Util.New("TextLabel", {
@@ -3153,7 +3218,10 @@ function Window:Tab(cfg)
 	end
 
 	function tab:SetIcon(name)
-		Icons.Apply(icon, name, window.IconStyle, iconHolder, MacLib.Theme.SubText)
+		self.Icon = name
+		Icons.Apply(icon, name, window.IconStyle, iconHolder, nil, function()
+			if tab._Paint then tab._Paint(true) end
+		end)
 	end
 
 	table.insert(window.Tabs, tab)
@@ -4311,7 +4379,7 @@ function Window:BuildSettings()
 		Default = prefs.IconStyle or window.IconStyle,
 		Callback = function(style)
 			if not ready then return end
-			MacLib.Icons.Style = style
+			MacLib.Icons.SetStyle(style)   -- redraws icons already on screen
 			window.IconStyle = style
 			MacLib.Prefs.Set("IconStyle", style)
 		end,
