@@ -261,7 +261,9 @@ Window:Dialog({
 
 ## Settings tab
 
-The gear in the title bar, left of the theme toggle, opens a settings page. Press it again and you
+The controller button in the title bar, left of the theme toggle, opens a settings page. It is
+deliberately not a gear — scripts using MacLib usually have their own settings tab with a gear icon,
+and two of them side by side is confusing. Press it again and you
 land back on whichever tab you were reading. It has no sidebar button — it is a page the window owns
 rather than one of your tabs, so it never interferes with your own layout.
 
@@ -274,6 +276,9 @@ up somewhere unreachable.
 
 **Window** — interface scale (80–120%), the toggle keybind, background blur, and recentre-on-open.
 
+While the settings page is showing, no sidebar tab is highlighted, since none of them is what you
+are looking at.
+
 Every control writes to `MacLib.Prefs`, saved to `MacLib/prefs.json`. These are the *user's*
 preferences, not your script's: they persist across sessions and apply to every script that loads
 MacLib. Your `Window` config supplies the defaults, and a preference only overrides it once the user
@@ -284,7 +289,7 @@ MacLib.Prefs.Get("HideButton")        -- "Bottom" | "Top" | "Custom"
 MacLib.Prefs.Set("Scale", 1.1)        -- set and save
 MacLib.Prefs.Reset()                  -- back to defaults
 
-Window:ToggleSettings()               -- same as pressing the gear
+Window:ToggleSettings()               -- same as pressing the button
 Window:OpenSettings()
 Window:CloseSettings()
 Window:SetScale(1.1)                  -- 0.6 to 1.6
@@ -377,7 +382,11 @@ Group:Tab({ Title = "Home", Icon = "solar:home-2-bold" })  -- explicit weight
 Group:Tab({ Title = "Home", Icon = "rbxassetid://123" })   -- your own asset
 ```
 
-Weights: `linear`, `outline`, `bold`, `broken`, `bold-duotone`, `line-duotone`. Change the default at any time with `MacLib.Icons.Style = "bold"`.
+Weights: `linear`, `outline`, `bold`, `broken`, `bold-duotone`, `line-duotone`.
+
+Use `MacLib.Icons.SetStyle("bold")` to change the weight — it also redraws every icon already on
+screen. Assigning `MacLib.Icons.Style` directly only affects icons created afterwards. Icons that
+named a weight explicitly (`solar:star-bold`) keep it.
 
 **How it works.** Roblox cannot render SVG, so MacLib ships its own rasteriser. Icons are downloaded through the executor's `request({})` function, parsed (paths with full curve and arc support, plus `circle` / `rect` / `ellipse` / `line` / `polygon`, group inheritance and transforms), scan-converted with anti-aliasing, and written into an `EditableImage`. Roughly 1 ms per icon, cached after the first use.
 
