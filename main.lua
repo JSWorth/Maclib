@@ -16,6 +16,8 @@
 
 	Everything is a single file. No dependencies. No assets to upload.
 
+	Licence : CC0 1.0 Universal (public domain dedication)
+
 ]]
 
 local MacLib = {
