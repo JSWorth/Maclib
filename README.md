@@ -1,5 +1,7 @@
 # MacLib
 
+![License](https://img.shields.io/badge/license-CC0--1.0-blue)
+
 A clean, sleek macOS-flavoured UI library for Roblox. Single file, no dependencies, no assets to upload.
 
 ```lua
@@ -348,9 +350,14 @@ MacLib parents its `ScreenGui` through `gethui()` when available, then `protect_
 
 ## Credits
 
-- Icons: [Solar Icon Set](https://solar-icons.vercel.app) by 480 Design (CC BY 4.0)
+- Icons: [Solar Icon Set](https://solar-icons.vercel.app) by 480 Design
 - Executor list: [WEAO](https://weao.gg)
 
 ## License
 
-MIT — see `LICENSE`.
+[CC0 1.0 Universal](LICENSE) — public domain dedication. Do anything you like with it, commercially or
+otherwise, no attribution required.
+
+Solar artwork is not redistributed here: icons are downloaded at runtime by the end user, and the
+embedded offline set is drawn from scratch. The credit above is there because the library is built
+around Solar's naming and design language, not because a licence compels it.
