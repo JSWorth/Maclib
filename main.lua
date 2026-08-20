@@ -1581,6 +1581,185 @@ do
 	end
 end
 
+--=================================================================================================
+--  SELF TEST
+--  Probes every environment capability the library leans on, so the footer can tell the
+--  user up front whether this executor will run the UI properly.
+--=================================================================================================
+
+local SUPPORT_LABEL = { full = "Full Support", partial = "Partial Support", broken = "Broken" }
+
+function Util.Hex(color)
+	if typeof(color) ~= "Color3" then return "FFFFFF" end
+	return string.format("%02X%02X%02X",
+		math.floor(color.R * 255 + 0.5),
+		math.floor(color.G * 255 + 0.5),
+		math.floor(color.B * 255 + 0.5))
+end
+
+--- Runs every capability probe. `window` is optional; `callback` receives the result table.
+--- Result: { Level = "full"|"partial"|"broken", Checks = { {Name, OK, Critical, Detail} } }
+function MacLib:RunSelfTest(window, callback)
+	task.spawn(function()
+		local checks = {}
+		local function add(name, ok, critical, detail)
+			checks[#checks + 1] = {
+				Name = name, OK = ok and true or false,
+				Critical = critical and true or false, Detail = detail or "",
+			}
+		end
+
+		------------------------------------------------------------------ 1. GUI container
+		local guiOK, guiWhere = false, "no usable container"
+		if window and window.Gui and window.Gui.Parent then
+			guiOK, guiWhere = true, "attached"
+		else
+			local probe = Instance.new("ScreenGui")
+			if Env.gethui and pcall(function() probe.Parent = Env.gethui() end) then
+				guiOK, guiWhere = true, "gethui"
+			elseif pcall(function() probe.Parent = CoreGui end) then
+				guiOK, guiWhere = true, "CoreGui"
+			elseif pcall(function() probe.Parent = LocalPlayer:WaitForChild("PlayerGui") end) then
+				guiOK, guiWhere = true, "PlayerGui"
+			end
+			pcall(function() probe:Destroy() end)
+		end
+		add("Interface", guiOK, true, guiWhere)
+
+		------------------------------------------------------------------ 2. instances / layout
+		local layoutOK = pcall(function()
+			local f = Instance.new("Frame")
+			f.Size = UDim2.fromOffset(10, 10)
+			local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 6) c.Parent = f
+			local st = Instance.new("UIStroke") st.Thickness = 1 st.Parent = f
+			local l = Instance.new("UIListLayout") l.Padding = UDim.new(0, 4) l.Parent = f
+			local sc = Instance.new("UIScale") sc.Scale = 1 sc.Parent = f
+			f:Destroy()
+		end)
+		add("Layout", layoutOK, true, layoutOK and "corners, strokes, layouts" or "instance creation blocked")
+
+		------------------------------------------------------------------ 3. input
+		local inputOK = pcall(function()
+			local _ = UserInputService.KeyboardEnabled
+			local conn = UserInputService.InputBegan:Connect(function() end)
+			conn:Disconnect()
+		end)
+		add("Input", inputOK, true, inputOK and "keybinds and toggle key" or "UserInputService blocked")
+
+		------------------------------------------------------------------ 4. tween
+		local tweenOK = pcall(function()
+			local f = Instance.new("Frame")
+			TweenService:Create(f, TweenInfo.new(0.1), { BackgroundTransparency = 1 }):Play()
+			f:Destroy()
+		end)
+		add("Animation", tweenOK, false, tweenOK and "TweenService" or "tweens unavailable")
+
+		------------------------------------------------------------------ 5. fonts
+		local fontOK = Util.Font(Enum.FontWeight.Medium) ~= nil
+		add("Fonts", fontOK, false, fontOK and "BuilderSans" or "falling back to legacy fonts")
+
+		------------------------------------------------------------------ 6. vector engine
+		local vectorOK, vectorDetail = false, "rasteriser failed"
+		local okv, err = pcall(function()
+			local doc = SVG.Parse(Icons.BuiltIn.widget)
+			assert(doc and #doc.shapes > 0, "no shapes parsed")
+			local cov = SVG.Rasterize(doc, 32)
+			local ink = 0
+			for i = 1, 32 * 32 do ink = ink + (cov[i] or 0) end
+			assert(ink > 1, "blank raster")
+			vectorDetail = "SVG parser and rasteriser"
+		end)
+		vectorOK = okv
+		if not okv then vectorDetail = tostring(err) end
+		add("Vector engine", vectorOK, false, vectorDetail)
+
+		------------------------------------------------------------------ 7. EditableImage
+		local content = Icons.BuildImage(Icons.BuiltIn.widget, 32)
+		local editableOK = content ~= nil
+		add("Icon images", editableOK, false,
+			editableOK and "EditableImage" or "EditableImage blocked, drawing icons as frames")
+
+		------------------------------------------------------------------ 8. icon download
+		local httpOK, httpDetail = false, "no HTTP transport"
+		if Http.Request then
+			httpDetail = "request({}) present but no icon returned"
+		elseif Env.IsExecutor then
+			httpDetail = "no request({}), trying HttpGet"
+		end
+		local t0 = os.clock()
+		while not Http.Probed and os.clock() - t0 < 5 do task.wait(0.1) end
+		if Http.Available then
+			local body = Http.Get(string.format(Icons.Endpoints[1], "home-2-outline"))
+			if body and body:find("<path", 1, true) then
+				local doc = SVG.Parse(body)
+				if doc and #doc.shapes > 0 then
+					httpOK = true
+					httpDetail = Http.Request and "request({})" or "HttpGet"
+				else
+					httpDetail = "downloaded but could not be parsed"
+				end
+			end
+		end
+		add("Solar icons", httpOK, false,
+			httpOK and (httpDetail .. ", live download") or (httpDetail .. ", using offline set"))
+
+		------------------------------------------------------------------ 9. filesystem
+		local fsOK, fsDetail = false, "no file system access"
+		if Env.HasFS then
+			local folder = (window and window.ConfigFolder) or "MacLib"
+			local path = folder .. "/.maclib_probe"
+			local ok = pcall(function()
+				if Env.makefolder and Env.isfolder and not Env.isfolder(folder) then
+					Env.makefolder(folder)
+				end
+				Env.writefile(path, "ok")
+				assert(Env.readfile(path) == "ok", "read back mismatch")
+			end)
+			pcall(function() if Env.delfile then Env.delfile(path) end end)
+			fsOK = ok
+			fsDetail = ok and "configs can be saved" or "write or read failed"
+		end
+		add("File system", fsOK, false, fsDetail)
+
+		------------------------------------------------------------------ 10. blur
+		local blurOK = false
+		pcall(function()
+			local b = Instance.new("BlurEffect")
+			b.Size = 0
+			b.Parent = Lighting
+			blurOK = b.Parent ~= nil
+			b:Destroy()
+		end)
+		add("Background blur", blurOK, false, blurOK and "Lighting writable" or "Lighting not writable")
+
+		------------------------------------------------------------------ verdict
+		local level = "full"
+		for _, c in ipairs(checks) do
+			if not c.OK then
+				if c.Critical then
+					level = "broken"
+					break
+				end
+				level = "partial"
+			end
+		end
+
+		local result = { Level = level, Label = SUPPORT_LABEL[level], Checks = checks }
+		MacLib.Support = result
+		if callback then pcall(callback, result) end
+	end)
+end
+
+function MacLib:GetSupport()
+	return MacLib.Support
+end
+
+MacLib.SupportColors = {
+	full    = Color3.fromRGB( 48, 209,  88),
+	partial = Color3.fromRGB(255, 189,  46),
+	broken  = Color3.fromRGB(255,  85,  75),
+}
+
 MacLib.ExecutorColors = ExecutorColors
 MacLib.ResolveExecutor = function(_, raw) return resolveExecutor(raw) end
 
@@ -1956,24 +2135,92 @@ function MacLib:Window(config)
 		Theme = { BackgroundColor3 = "Divider" },
 	})
 	local exeName, exeColor = resolveExecutor(Env.IsExecutor and Env.Executor or "LocalScript")
+	self.ExecutorColor = exeColor
+
 	local exeLabel = Util.New("TextLabel", {
 		Name = "Executor",
-		Size = UDim2.new(1, -24, 1, 0),
-		Position = UDim2.new(0, 13, 0, 0),
+		Size = UDim2.new(1, -22, 1, 0),
+		Position = UDim2.new(0, 12, 0, 0),
 		BackgroundTransparency = 1,
-		Text = "[ " .. exeName .. " ]",
+		RichText = true,
+		Text = "",
 		TextSize = 11,
-		TextColor3 = exeColor or theme.Muted,
+		TextColor3 = theme.Muted,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextTruncate = Enum.TextTruncate.AtEnd,
 		Weight = Enum.FontWeight.Bold,
 		ZIndex = 5,
 		Parent = footer,
 	})
-	if not exeColor then
-		Util.Bind(exeLabel, "TextColor3", "Muted")
+
+	local supportBtn = Util.New("TextButton", {
+		Name = "SupportHit",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		AutoButtonColor = false,
+		Text = "",
+		ZIndex = 6,
+		Parent = footer,
+	})
+
+	--- Repaints the footer badge. Called on load, when the self test finishes and on
+	--- every theme change, since RichText bakes its colours into the string.
+	local function paintFooter()
+		local th = MacLib.Theme
+		local res = MacLib.Support
+		local nameHex = Util.Hex(exeColor or th.Muted)
+		local badgeText, badgeHex
+		if res then
+			badgeText = res.Label
+			badgeHex = Util.Hex(MacLib.SupportColors[res.Level] or th.Muted)
+		else
+			badgeText = "Checking"
+			badgeHex = Util.Hex(th.Muted)
+		end
+		exeLabel.Text = string.format(
+			'<font color="#%s">[ %s ]</font> <font color="#%s">[ %s ]</font>',
+			nameHex, exeName, badgeHex, badgeText)
+
+		-- step the size down rather than truncate the badge on long executor names
+		exeLabel.TextSize = 11
+		pcall(function()
+			for _, size in ipairs({ 11, 10, 9 }) do
+				exeLabel.TextSize = size
+				if exeLabel.TextBounds.X <= exeLabel.AbsoluteSize.X then break end
+			end
+		end)
 	end
-	self.ExecutorColor = exeColor
+	self._PaintFooter = paintFooter
+	paintFooter()
+	table.insert(self._OnTheme, paintFooter)
+
+	MacLib:RunSelfTest(self, function(result)
+		self.Support = result
+		paintFooter()
+	end)
+
+	supportBtn.MouseButton1Click:Connect(function()
+		local res = MacLib.Support
+		if not res then
+			self:Notify({ Title = "Still checking", Description = "The environment probe has not finished yet.",
+				Icon = "refresh", Duration = 3 })
+			return
+		end
+		local lines = {}
+		for _, c in ipairs(res.Checks) do
+			local hex = c.OK and Util.Hex(MacLib.SupportColors.full)
+				or (c.Critical and Util.Hex(MacLib.SupportColors.broken) or Util.Hex(MacLib.SupportColors.partial))
+			lines[#lines + 1] = string.format('%s  <font color="#%s">%s</font>',
+				c.Name, hex, c.Detail ~= "" and c.Detail or (c.OK and "ok" or "unavailable"))
+		end
+		self:Dialog({
+			Title = "[ " .. exeName .. " ]  " .. res.Label,
+			Description = table.concat(lines, "\n"),
+			RichText = true,
+			Width = 420,
+			Buttons = { { Title = "Close", Primary = true } },
+		})
+	end)
 
 	local container = Util.New("Frame", {
 		Name = "Container",
@@ -3725,7 +3972,7 @@ function Window:Dialog(cfg)
 
 	local sheet = Util.New("Frame", {
 		Name = "Dialog",
-		Size = UDim2.fromOffset(330, 0),
+		Size = UDim2.fromOffset(cfg.Width or 330, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		Position = UDim2.new(0.5, 0, 0, -20),
 		AnchorPoint = Vector2.new(0.5, 0),
@@ -3761,8 +4008,10 @@ function Window:Dialog(cfg)
 		Text = tostring(cfg.Description or cfg.Content or ""),
 		TextSize = 12,
 		TextColor3 = theme.SubText,
-		TextXAlignment = Enum.TextXAlignment.Center,
+		TextXAlignment = cfg.RichText and Enum.TextXAlignment.Left or Enum.TextXAlignment.Center,
 		TextWrapped = true,
+		RichText = cfg.RichText == true,
+		LineHeight = cfg.RichText and 1.35 or 1,
 		Weight = Enum.FontWeight.Regular,
 		LayoutOrder = 2,
 		ZIndex = 42,
