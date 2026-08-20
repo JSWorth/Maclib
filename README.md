@@ -13,7 +13,8 @@ local MacLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/JSWort
 - Dark and Light themes with a live runtime switch
 - Real [Solar](https://solar-icons.vercel.app) icons, fetched and rasterised at runtime — no pre-uploaded decals
 - Toggles, sliders, dropdowns (single and multi), inputs, keybinds, buttons, paragraphs, labels, dividers
-- Toast notifications and modal alert sheets
+- Toast notifications, modal alert sheets and a first-run changelog card
+- A built-in settings tab whose preferences follow the user across every script
 - Flag-based config saving and loading
 - A self-test that reports what actually works in the current environment
 
@@ -26,6 +27,8 @@ local MacLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/JSWort
 - [Tabs and sections](#tabs-and-sections)
 - [Elements](#elements)
 - [Notifications and dialogs](#notifications-and-dialogs)
+- [Settings tab](#settings-tab)
+- [Changelog card](#changelog-card)
 - [Flags and configs](#flags-and-configs)
 - [Theming](#theming)
 - [Icons](#icons)
@@ -90,6 +93,7 @@ local Window = MacLib:Window({
     ToggleKey  = Enum.KeyCode.RightShift,         -- show / hide the window
     Folder     = "Aurora",                        -- where configs are written
     Blur       = true,                            -- background blur while open
+    Changelog  = true,                            -- show the changelog card on first run
 })
 ```
 
@@ -252,6 +256,80 @@ Window:Dialog({
     },
 })
 ```
+
+---
+
+## Settings tab
+
+The gear in the title bar, left of the theme toggle, opens a settings page. Press it again and you
+land back on whichever tab you were reading. It has no sidebar button — it is a page the window owns
+rather than one of your tabs, so it never interferes with your own layout.
+
+**Hide button** — the pill you tap to bring the window back after minimising. It can sit at the
+**bottom** (the default), at the **top**, or **anywhere** the user drags it. "Drag to place" makes the
+pill appear so it can be dragged live; the position is clamped to the screen edges, so it cannot end
+up somewhere unreachable.
+
+**Appearance** — theme, nine accent presets, and the Solar icon weight.
+
+**Window** — interface scale (80–120%), the toggle keybind, background blur, and recentre-on-open.
+
+Every control writes to `MacLib.Prefs`, saved to `MacLib/prefs.json`. These are the *user's*
+preferences, not your script's: they persist across sessions and apply to every script that loads
+MacLib. Your `Window` config supplies the defaults, and a preference only overrides it once the user
+has actually changed that setting.
+
+```lua
+MacLib.Prefs.Get("HideButton")        -- "Bottom" | "Top" | "Custom"
+MacLib.Prefs.Set("Scale", 1.1)        -- set and save
+MacLib.Prefs.Reset()                  -- back to defaults
+
+Window:ToggleSettings()               -- same as pressing the gear
+Window:OpenSettings()
+Window:CloseSettings()
+Window:SetScale(1.1)                  -- 0.6 to 1.6
+Window:SetBlur(false)
+MacLib:SetAccent(MacLib.AccentByName("Purple"))
+```
+
+Without file system access the preferences still work for the session; they just cannot persist.
+
+---
+
+## Changelog card
+
+The first time someone runs your script, a card slides into the top-right corner showing what
+changed and the MacLib version. It looks like a notification but taller, sits above any toasts, and
+stays until dismissed. It appears **once per version** — bump the version and everyone sees it again.
+
+Edit the table near the bottom of `main.lua`:
+
+```lua
+MacLib.Changelog = {
+    Version = "1.0.1",
+    Date    = "12 August 2026",
+    Entries = {
+        { Tag = "New",      Text = "Colour picker element." },
+        { Tag = "Improved", Text = "Dropdowns open upwards when short on space." },
+        { Tag = "Fixed",    Text = "Sliders no longer drift on touch devices." },
+    },
+}
+```
+
+Tags are `New` (green), `Improved` (blue), `Fixed` (amber) and `Removed` (red), defined in
+`MacLib.ChangelogTags`. Any other tag falls back to the accent colour.
+
+| Call | Description |
+| --- | --- |
+| `MacLib:ShowChangelog()` | Show it if this version has not been seen |
+| `MacLib:ShowChangelog(true)` | Show it regardless — useful for a "changelog" button |
+| `MacLib:HasSeenChangelog()` | Has this version been seen on this machine |
+| `MacLib:MarkChangelogSeen()` | Mark it seen without showing it |
+
+Pass `Changelog = false` in the window config to suppress the automatic card.
+
+The seen-version marker is written to `MacLib/lastseen.txt`. Without file system access it cannot
+persist, so it shows once per session instead — never twice.
 
 ---
 
