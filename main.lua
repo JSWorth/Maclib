@@ -1071,7 +1071,9 @@ do
 	----------------------------------------------------------------------------------------------
 	-- coverage table -> EditableImage
 	----------------------------------------------------------------------------------------------
-	local editableSupported = nil
+	Icons.Stats = { Image = 0, Vector = 0, Failed = 0 }
+
+	local displayMode = nil   -- "image" | "frames", decided once by probeDisplay()
 
 	local function createEditable(size)
 		local ok, img = pcall(function()
@@ -1114,35 +1116,72 @@ do
 		return ok2
 	end
 
+	--- Decides once whether this environment can actually DISPLAY an EditableImage.
+	--- Creating one is not enough: Content.fromObject has to exist, ImageContent has to
+	--- accept it, and the value has to still be there when we read it back. Anything less
+	--- and we draw icons with frames instead - which is why this probes the whole round
+	--- trip on a real ImageLabel rather than just checking that CreateEditableImage worked.
+	function Icons.ProbeDisplay()
+		if displayMode then return displayMode end
+		displayMode = "frames"
+		pcall(function()
+			local img = createEditable(8)
+			assert(img, "CreateEditableImage unavailable")
+
+			local cov = {}
+			for i = 1, 64 do cov[i] = 1 end
+			assert(writePixels(img, 8, cov), "pixel write rejected")
+
+			assert(Content and Content.fromObject, "Content.fromObject unavailable")
+			local content = Content.fromObject(img)
+			assert(content ~= nil, "Content.fromObject returned nil")
+
+			local probe = Instance.new("ImageLabel")
+			probe.ImageContent = content
+			local readBack = probe.ImageContent
+			probe:Destroy()
+			assert(readBack ~= nil, "ImageContent did not persist")
+
+			displayMode = "image"
+		end)
+		return displayMode
+	end
+
+	function Icons.DisplayMode()
+		return Icons.ProbeDisplay()
+	end
+
+	--- Returns (content, doc). `content` is nil whenever the icon must be drawn as frames,
+	--- and `doc` is nil only when the source could not be parsed at all.
 	function Icons.BuildImage(svgSource, size)
 		size = size or Icons.Size
 		local doc = SVG.Parse(svgSource)
 		if not doc or #doc.shapes == 0 then return nil, nil end
-		local cov = SVG.Rasterize(doc, size)
 
-		if editableSupported ~= false then
-			local img = createEditable(size)
-			if img then
-				if writePixels(img, size, cov) then
-					editableSupported = true
-					local okc, content = pcall(function() return Content.fromObject(img) end)
-					if okc and content then return content, doc end
-					return img, doc
-				end
-			end
-			editableSupported = false
+		if Icons.ProbeDisplay() ~= "image" then return nil, doc end
+
+		local cov = SVG.Rasterize(doc, size)
+		local img = createEditable(size)
+		if img and writePixels(img, size, cov) then
+			local okc, content = pcall(function() return Content.fromObject(img) end)
+			if okc and content ~= nil then return content, doc end
 		end
+		-- creation worked during the probe but failed now: degrade rather than hand back
+		-- an object the ImageLabel will silently ignore
 		return nil, doc
 	end
 
 	----------------------------------------------------------------------------------------------
 	-- fallback renderer: draw stroked geometry with rotated Frames
 	----------------------------------------------------------------------------------------------
+	--- Draws the icon with rotated frames. Returns how many segments were drawn so the
+	--- caller can tell the difference between "rendered" and "silently did nothing".
 	function Icons.RenderFrames(holder, doc, color)
 		for _, c in ipairs(holder:GetChildren()) do
 			if c:IsA("Frame") then c:Destroy() end
 		end
-		if not doc then return end
+		if not doc then return 0 end
+		local drawn = 0
 		local U = 100 -- work in a 0..100 percentage space
 		local scale = U / math.max(doc.width, doc.height)
 		local offX = (U - doc.width * scale) * 0.5 - doc.minX * scale
@@ -1160,7 +1199,7 @@ do
 					pts[#pts + 1] = pts[1]
 				end
 				for i = 1, #pts - 1 do
-					if budget <= 0 then return end
+					if budget <= 0 then return drawn end
 					budget = budget - 1
 					local a, b = pts[i], pts[i + 1]
 					local dx, dy = b[1] - a[1], b[2] - a[2]
@@ -1177,26 +1216,48 @@ do
 						uc.CornerRadius = UDim.new(1, 0)
 						uc.Parent = seg
 						seg.Parent = holder
+						drawn = drawn + 1
 					end
 				end
 			end
 		end
+		return drawn
 	end
 
 	----------------------------------------------------------------------------------------------
 	-- public: attach an icon to an ImageLabel (+ optional frame holder)
 	----------------------------------------------------------------------------------------------
 	local function assign(target, content)
+		if content == nil then return false end
 		if typeof(content) == "string" then
 			target.Image = content
 			target.ImageTransparency = 0
 			return true
 		end
 		local ok = pcall(function() target.ImageContent = content end)
-		if ok then
-			target.ImageTransparency = 0
+		if not ok then return false end
+		-- assignment not erroring is not proof it took
+		local okRead, stuck = pcall(function() return target.ImageContent end)
+		if not okRead or stuck == nil then return false end
+		target.ImageTransparency = 0
+		return true
+	end
+
+	--- Puts an icon on the label by whatever route works, and records which one.
+	local function present(target, holder, content, doc, color)
+		if assign(target, content) then
+			Icons.Stats.Image = Icons.Stats.Image + 1
 			return true
 		end
+		target.ImageTransparency = 1
+		if doc and holder then
+			local drawn = Icons.RenderFrames(holder, doc, color or Color3.new(1, 1, 1))
+			if drawn and drawn > 0 then
+				Icons.Stats.Vector = Icons.Stats.Vector + 1
+				return true
+			end
+		end
+		Icons.Stats.Failed = Icons.Stats.Failed + 1
 		return false
 	end
 
@@ -1227,12 +1288,7 @@ do
 		if forceOffline then key = "builtin:" .. base end
 		local cached = Icons.Cache[key]
 		if cached then
-			if cached.content then
-				assign(target, cached.content)
-			elseif cached.doc and holder then
-				target.ImageTransparency = 1
-				Icons.RenderFrames(holder, cached.doc, color or Color3.new(1, 1, 1))
-			end
+			present(target, holder, cached.content, cached.doc, color)
 			return
 		end
 
@@ -1256,20 +1312,19 @@ do
 					end
 				end
 			end
-			if not source then
-				source = Icons.Offline(base)
+			local content, doc
+			if source then
+				content, doc = Icons.BuildImage(source, Icons.Size)
+			end
+			-- a download that parsed to nothing is no better than no download
+			if not doc then
+				content, doc = Icons.BuildImage(Icons.Offline(base), Icons.Size)
 			end
 
-			local content, doc = Icons.BuildImage(source, Icons.Size)
 			Icons.Cache[key] = { content = content, doc = doc }
 
 			if target.Parent then
-				if content then
-					assign(target, content)
-				elseif doc and holder then
-					target.ImageTransparency = 1
-					Icons.RenderFrames(holder, doc, color or Color3.new(1, 1, 1))
-				end
+				present(target, holder, content, doc, color)
 			end
 		end)
 	end
@@ -1674,10 +1729,13 @@ function MacLib:RunSelfTest(window, callback)
 		add("Vector engine", vectorOK, false, vectorDetail)
 
 		------------------------------------------------------------------ 7. EditableImage
-		local content = Icons.BuildImage(Icons.BuiltIn.widget, 32)
-		local editableOK = content ~= nil
-		add("Icon images", editableOK, false,
-			editableOK and "EditableImage" or "EditableImage blocked, drawing icons as frames")
+		-- ProbeDisplay walks the whole round trip (create -> write -> Content.fromObject
+		-- -> assign to an ImageLabel -> read back), so this cannot pass while icons are
+		-- invisible on screen.
+		local mode = Icons.DisplayMode()
+		add("Icon images", mode == "image", false,
+			mode == "image" and "EditableImage verified on an ImageLabel"
+				or "EditableImage unusable, drawing icons as frames")
 
 		------------------------------------------------------------------ 8. icon download
 		local httpOK, httpDetail = false, "no HTTP transport"
@@ -1731,6 +1789,20 @@ function MacLib:RunSelfTest(window, callback)
 			b:Destroy()
 		end)
 		add("Background blur", blurOK, false, blurOK and "Lighting writable" or "Lighting not writable")
+
+		------------------------------------------------------------------ 11. observed icons
+		-- Everything above is a capability probe. This one watches what the window's own
+		-- icons actually did, so a failure mode none of the probes anticipated still
+		-- shows up in the badge.
+		local t1 = os.clock()
+		while os.clock() - t1 < 4 do
+			if Icons.Stats.Image + Icons.Stats.Vector + Icons.Stats.Failed > 0 then break end
+			task.wait(0.15)
+		end
+		task.wait(0.35)
+		local shown = Icons.Stats.Image + Icons.Stats.Vector
+		add("Icon display", Icons.Stats.Failed == 0 and shown > 0, false,
+			string.format("%d image, %d vector, %d failed", Icons.Stats.Image, Icons.Stats.Vector, Icons.Stats.Failed))
 
 		------------------------------------------------------------------ verdict
 		local level = "full"
@@ -3848,7 +3920,7 @@ function MacLib:Notify(cfg)
 		Parent = iconBg,
 		Theme = { ImageColor3 = "Accent" },
 	})
-	Icons.Apply(icon, cfg.Icon or "bell", Icons.Style, iconBg, theme.Accent)
+	Icons.Apply(icon, cfg.Icon or "bell", Icons.Style, icon, theme.Accent)
 
 	local text = Util.New("Frame", {
 		Size = UDim2.new(1, -60, 0, 0),
