@@ -3,7 +3,7 @@
 
 	MacLib  ~  a clean, sleek macOS-flavoured UI library for Roblox
 	------------------------------------------------------------------
-	Version : 1.0.0
+	Version : 1.1.0  "The Less Limits Update"
 	Source  : https://github.com/JSWorth/Maclib
 	Usage   : local MacLib = loadstring(game:HttpGet(
 	              "https://raw.githubusercontent.com/JSWorth/Maclib/main/main.lua"))()
@@ -21,7 +21,7 @@
 ]]
 
 local MacLib = {
-	Version      = "1.0.0",
+	Version      = "1.1.0",
 	Windows      = {},
 	Flags        = {},   -- flag -> element object
 	Values       = {},   -- flag -> current value
@@ -1644,6 +1644,98 @@ end
 --  user up front whether this executor will run the UI properly.
 --=================================================================================================
 
+--=================================================================================================
+--  PREFERENCES
+--  Interface preferences the user sets from the settings tab. Separate from Window configs,
+--  which belong to the script; these follow the person across every script that uses MacLib.
+--=================================================================================================
+
+local Prefs = {}
+do
+	local FOLDER = "MacLib"
+	local FILE   = "MacLib/prefs.json"
+	local data   = nil
+
+	local DEFAULTS = {
+		HideButton  = "Bottom",   -- "Bottom" | "Top" | "Custom"
+		HideButtonX = 0.5,
+		HideButtonY = 0.92,
+		Scale       = 1,
+		Recentre    = false,
+	}
+
+	function Prefs.All()
+		if data then return data end
+		data = {}
+		for k, v in pairs(DEFAULTS) do data[k] = v end
+		if Env.HasFS then
+			local ok, raw = pcall(Env.readfile, FILE)
+			if ok and type(raw) == "string" and #raw > 0 then
+				local ok2, decoded = pcall(function() return HttpService:JSONDecode(raw) end)
+				if ok2 and type(decoded) == "table" then
+					for k, v in pairs(decoded) do data[k] = v end
+				end
+			end
+		end
+		return data
+	end
+
+	function Prefs.Get(key, fallback)
+		local v = Prefs.All()[key]
+		if v == nil then return fallback end
+		return v
+	end
+
+	function Prefs.Save()
+		if not Env.HasFS then return false end
+		return (pcall(function()
+			if (not Env.isfolder) or (not Env.isfolder(FOLDER)) then
+				pcall(Env.makefolder, FOLDER)
+			end
+			Env.writefile(FILE, HttpService:JSONEncode(Prefs.All()))
+		end))
+	end
+
+	function Prefs.Set(key, value)
+		Prefs.All()[key] = value
+		return Prefs.Save()
+	end
+
+	function Prefs.Reset()
+		data = nil
+		if Env.HasFS and Env.delfile then pcall(Env.delfile, FILE) end
+		return Prefs.All()
+	end
+end
+MacLib.Prefs = Prefs
+
+--- Accent presets, stored by name so preferences stay JSON friendly.
+local AccentPresets = {
+	{ Name = "Blue",     Color = Color3.fromRGB( 10, 132, 255) },
+	{ Name = "Purple",   Color = Color3.fromRGB(175,  82, 222) },
+	{ Name = "Pink",     Color = Color3.fromRGB(255,  55,  95) },
+	{ Name = "Red",      Color = Color3.fromRGB(255,  69,  58) },
+	{ Name = "Orange",   Color = Color3.fromRGB(255, 159,  10) },
+	{ Name = "Yellow",   Color = Color3.fromRGB(255, 214,  10) },
+	{ Name = "Green",    Color = Color3.fromRGB( 48, 209,  88) },
+	{ Name = "Teal",     Color = Color3.fromRGB( 64, 200, 224) },
+	{ Name = "Graphite", Color = Color3.fromRGB(152, 152, 157) },
+}
+MacLib.AccentPresets = AccentPresets
+
+function MacLib.AccentByName(name)
+	for _, preset in ipairs(AccentPresets) do
+		if preset.Name:lower() == tostring(name):lower() then return preset.Color end
+	end
+	return nil
+end
+
+function MacLib.AccentNames()
+	local out = {}
+	for _, preset in ipairs(AccentPresets) do out[#out + 1] = preset.Name end
+	return out
+end
+
 local SUPPORT_LABEL = { full = "Full Support", partial = "Partial Support", broken = "Broken" }
 
 function Util.Hex(color)
@@ -1841,6 +1933,15 @@ MacLib.Theme = Themes.Dark
 MacLib.Util = Util
 MacLib.Themes = Themes
 
+--- Recolours every accent-bound instance in place.
+function MacLib:SetAccent(color)
+	if typeof(color) ~= "Color3" then return end
+	Themes.Dark.Accent = color
+	Themes.Light.Accent = color
+	MacLib.Theme.Accent = color
+	MacLib:SetTheme(MacLib.Theme.Name)
+end
+
 function MacLib:SetTheme(name)
 	local theme = Themes[name] or (type(name) == "table" and name) or Themes.Dark
 	MacLib.Theme = theme
@@ -1913,7 +2014,24 @@ local function resolveSize(size)
 end
 
 function MacLib:Window(config)
-	config = config or {}
+	-- work on a copy: saved preferences override the script's config, and the script's
+	-- own table should not be mutated behind its back
+	local given = config or {}
+	config = {}
+	for k, v in pairs(given) do config[k] = v end
+
+	local prefs = Prefs.All()
+	if prefs.Theme then config.Theme = prefs.Theme end
+	if prefs.Accent then
+		local c = MacLib.AccentByName(prefs.Accent)
+		if c then config.Accent = c end
+	end
+	if prefs.IconStyle then config.IconStyle = prefs.IconStyle end
+	if prefs.Blur ~= nil then config.Blur = prefs.Blur end
+	if prefs.ToggleKey then
+		local ok, key = pcall(function() return Enum.KeyCode[prefs.ToggleKey] end)
+		if ok and key then config.ToggleKey = key end
+	end
 
 	if config.Theme then MacLib:SetTheme(config.Theme) end
 	if config.Accent then
@@ -1937,6 +2055,10 @@ function MacLib:Window(config)
 	self.ToggleKey   = config.ToggleKey or config.Keybind or Enum.KeyCode.RightShift
 	self._OnTheme    = {}
 	self._Connections= {}
+	self.UIScale     = tonumber(prefs.Scale) or 1
+	self.BlurEnabled = config.Blur ~= false
+	self.Recentre    = prefs.Recentre and true or false
+	self.SettingsOpen= false
 
 	Icons.Style = self.IconStyle
 
@@ -2123,7 +2245,47 @@ function MacLib:Window(config)
 	themeBtn.MouseEnter:Connect(function() Util.Tween(themeBtn, 0.12, { BackgroundTransparency = 0 }) end)
 	themeBtn.MouseLeave:Connect(function() Util.Tween(themeBtn, 0.16, { BackgroundTransparency = 1 }) end)
 	themeBtn.MouseButton1Click:Connect(function()
-		MacLib:SetTheme(MacLib.Theme.Name == "Dark" and "Light" or "Dark")
+		local next = MacLib.Theme.Name == "Dark" and "Light" or "Dark"
+		MacLib:SetTheme(next)
+		Prefs.Set("Theme", next)
+		if self.SyncSettings then self:SyncSettings() end
+	end)
+
+	-- settings button, immediately left of the theme toggle
+	local gearBtn = Util.New("TextButton", {
+		Name = "SettingsToggle",
+		Size = UDim2.fromOffset(26, 26),
+		Position = UDim2.new(1, -44, 0.5, 0),
+		AnchorPoint = Vector2.new(1, 0.5),
+		BackgroundColor3 = theme.Element,
+		BackgroundTransparency = 1,
+		AutoButtonColor = false,
+		Text = "",
+		ZIndex = 8,
+		Parent = titlebar,
+		Theme = { BackgroundColor3 = "Element" },
+	})
+	Util.Corner(8, gearBtn)
+	local gearIcon = Util.New("ImageLabel", {
+		Size = UDim2.fromOffset(16, 16),
+		Position = UDim2.fromScale(0.5, 0.5),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		BackgroundTransparency = 1,
+		ImageColor3 = theme.SubText,
+		ZIndex = 9,
+		Parent = gearBtn,
+	})
+	Icons.Apply(gearIcon, "settings-minimalistic", self.IconStyle, gearIcon, theme.SubText)
+	self.GearButton, self.GearIcon = gearBtn, gearIcon
+
+	gearBtn.MouseEnter:Connect(function()
+		if not self.SettingsOpen then Util.Tween(gearBtn, 0.12, { BackgroundTransparency = 0 }) end
+	end)
+	gearBtn.MouseLeave:Connect(function()
+		if not self.SettingsOpen then Util.Tween(gearBtn, 0.16, { BackgroundTransparency = 1 }) end
+	end)
+	gearBtn.MouseButton1Click:Connect(function()
+		self:ToggleSettings()
 	end)
 
 	----------------------------------------------------------------------------------------------
@@ -2434,6 +2596,19 @@ function MacLib:Window(config)
 	local minimizedChip
 	local blur
 
+	--- Single source of truth for the blur: on only while the window is genuinely visible.
+	local function updateBlur()
+		if not blur then return end
+		local want = (self.Open and not self.Minimized and self.BlurEnabled) and 14 or 0
+		Util.Tween(blur, 0.25, { Size = want })
+	end
+	self._UpdateBlur = updateBlur
+
+	function self:SetBlur(enabled)
+		self.BlurEnabled = enabled and true or false
+		updateBlur()
+	end
+
 	local function buildChip()
 		local chip = Util.New("TextButton", {
 			Name = "Chip",
@@ -2449,7 +2624,7 @@ function MacLib:Window(config)
 			Theme = { BackgroundColor3 = "Titlebar" },
 		})
 		Util.Corner(11, chip)
-		Util.Stroke(chip, "WindowStroke", 1, 0.4)
+		self._ChipStroke = Util.Stroke(chip, "WindowStroke", 1, 0.4)
 		Util.Shadow(chip, 34, 1, 11)
 		local dot = Util.New("Frame", {
 			Size = UDim2.fromOffset(9, 9),
@@ -2478,6 +2653,98 @@ function MacLib:Window(config)
 		return chip
 	end
 
+	----------------------------------------------------------------------------------------------
+	-- the chip exists from the start so its position can be previewed and dragged without
+	-- having to minimise first
+	----------------------------------------------------------------------------------------------
+	minimizedChip = buildChip()
+	self.Chip = minimizedChip
+
+	--- Places the chip according to the saved preference.
+	function self:ApplyChipPosition()
+		local chip = self.Chip
+		if not chip then return end
+		local mode = Prefs.Get("HideButton", "Bottom")
+		if mode == "Top" then
+			chip.AnchorPoint = Vector2.new(0.5, 0)
+			chip.Position = UDim2.new(0.5, 0, 0, 26)
+		elseif mode == "Custom" then
+			chip.AnchorPoint = Vector2.new(0.5, 0.5)
+			chip.Position = UDim2.new(
+				tonumber(Prefs.Get("HideButtonX", 0.5)) or 0.5, 0,
+				tonumber(Prefs.Get("HideButtonY", 0.92)) or 0.92, 0)
+		else
+			chip.AnchorPoint = Vector2.new(0.5, 1)
+			chip.Position = UDim2.new(0.5, 0, 1, -26)
+		end
+	end
+
+	function self:BeginChipPlacement()
+		if self.PlacingChip then return end
+		self.PlacingChip = true
+		minimizedChip.Visible = true
+		minimizedChip.BackgroundTransparency = 0
+		if self._ChipStroke then
+			self._ChipStroke.Color = MacLib.Theme.Accent
+			self._ChipStroke.Transparency = 0
+			self._ChipStroke.Thickness = 2
+		end
+	end
+
+	function self:EndChipPlacement()
+		if not self.PlacingChip then return end
+		self.PlacingChip = false
+		if self._ChipStroke then
+			self._ChipStroke.Color = MacLib.Theme.WindowStroke
+			self._ChipStroke.Transparency = 0.4
+			self._ChipStroke.Thickness = 1
+		end
+		if not self.Minimized then minimizedChip.Visible = false end
+		Prefs.Save()
+	end
+
+	minimizedChip.MouseButton1Click:Connect(function()
+		if self.PlacingChip then return end
+		self:Restore()
+	end)
+
+	do
+		local dragging = false
+		minimizedChip.InputBegan:Connect(function(input)
+			if not self.PlacingChip then return end
+			if input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch then
+				dragging = true
+			end
+		end)
+		minimizedChip.InputEnded:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch then
+				dragging = false
+				Prefs.Save()
+			end
+		end)
+		self._Connections[#self._Connections + 1] = UserInputService.InputChanged:Connect(function(input)
+			if not dragging or not self.PlacingChip then return end
+			if input.UserInputType ~= Enum.UserInputType.MouseMovement
+				and input.UserInputType ~= Enum.UserInputType.Touch then return end
+			local cam = workspace.CurrentCamera
+			local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
+			-- clamped so the chip can never be parked off screen where it cannot be tapped
+			local halfW = minimizedChip.AbsoluteSize.X / 2 + 6
+			local halfH = minimizedChip.AbsoluteSize.Y / 2 + 6
+			local x = math.clamp(input.Position.X, halfW, math.max(halfW, vp.X - halfW)) / vp.X
+			local y = math.clamp(input.Position.Y, halfH, math.max(halfH, vp.Y - halfH)) / vp.Y
+			minimizedChip.AnchorPoint = Vector2.new(0.5, 0.5)
+			minimizedChip.Position = UDim2.fromScale(x, y)
+			Prefs.All().HideButton  = "Custom"
+			Prefs.All().HideButtonX = x
+			Prefs.All().HideButtonY = y
+		end)
+	end
+
+	self:ApplyChipPosition()
+
 	closeBtn.MouseButton1Click:Connect(function()
 		self:Unload()
 	end)
@@ -2493,17 +2760,14 @@ function MacLib:Window(config)
 	function self:Minimize()
 		if self.Minimized then return end
 		self.Minimized = true
-		if not minimizedChip then
-			minimizedChip = buildChip()
-			minimizedChip.MouseButton1Click:Connect(function() self:Restore() end)
-		end
 		self.CurrentSize = UDim2.fromOffset(root.AbsoluteSize.X, root.AbsoluteSize.Y)
 		Util.Tween(root, 0.2, { Size = UDim2.fromOffset(root.AbsoluteSize.X * 0.85, 0) })
-		if blur then Util.Tween(blur, 0.2, { Size = 0 }) end
+		updateBlur()
 		task.delay(0.2, function()
 			root.Visible = false
 			root.Size = self.CurrentSize or defaultSize
 		end)
+		self:ApplyChipPosition()
 		minimizedChip.Visible = true
 		minimizedChip.BackgroundTransparency = 1
 		Util.Tween(minimizedChip, 0.22, { BackgroundTransparency = 0 })
@@ -2511,11 +2775,11 @@ function MacLib:Window(config)
 
 	function self:Restore()
 		self.Minimized = false
-		if minimizedChip then minimizedChip.Visible = false end
+		if minimizedChip and not self.PlacingChip then minimizedChip.Visible = false end
 		root.Visible = true
 		root.Size = UDim2.fromOffset((self.CurrentSize or defaultSize).X.Offset, 0)
 		Util.Tween(root, 0.26, { Size = self.CurrentSize or defaultSize })
-		if blur and self.Open then Util.Tween(blur, 0.26, { Size = 14 }) end
+		updateBlur()
 	end
 
 	function self:Maximize()
@@ -2550,8 +2814,16 @@ function MacLib:Window(config)
 	self.Blur = blur
 
 	local scale = Instance.new("UIScale")
-	scale.Scale = 0.94
+	scale.Scale = self.UIScale * 0.94
 	scale.Parent = root
+
+	--- Interface scale, 60%-160%. Multiplies into the same UIScale the open animation uses.
+	function self:SetScale(value)
+		value = tonumber(value) or 1
+		if value < 0.6 then value = 0.6 elseif value > 1.6 then value = 1.6 end
+		self.UIScale = value
+		Util.Tween(scale, 0.18, { Scale = value })
+	end
 
 	function self:SetOpen(state, instant)
 		self.Open = state
@@ -2561,21 +2833,70 @@ function MacLib:Window(config)
 		end
 		if state then
 			root.Visible = true
+			if self.Recentre then root.Position = UDim2.fromScale(0.5, 0.5) end
 			if instant then
-				scale.Scale = 1
+				scale.Scale = self.UIScale
 				main.BackgroundTransparency = 0
 			else
-				scale.Scale = 0.94
-				Util.Tween(scale, 0.3, { Scale = 1 }, Enum.EasingStyle.Back)
+				scale.Scale = self.UIScale * 0.94
+				Util.Tween(scale, 0.3, { Scale = self.UIScale }, Enum.EasingStyle.Back)
 			end
-			if blur then Util.Tween(blur, 0.3, { Size = 14 }) end
 		else
-			Util.Tween(scale, 0.22, { Scale = 0.94 })
-			if blur then Util.Tween(blur, 0.25, { Size = 0 }) end
+			Util.Tween(scale, 0.22, { Scale = self.UIScale * 0.94 })
 			task.delay(0.22, function()
 				if not self.Open then root.Visible = false end
 			end)
 		end
+		updateBlur()
+	end
+
+	----------------------------------------------------------------------------------------------
+	-- settings tab: a page with no sidebar button. Opening remembers the current tab so
+	-- closing puts you back exactly where you were.
+	----------------------------------------------------------------------------------------------
+	local function paintGear(active)
+		local th = MacLib.Theme
+		Util.Tween(gearBtn, 0.15, { BackgroundTransparency = active and 0 or 1 })
+		Util.Tween(gearIcon, 0.15, { ImageColor3 = active and th.Accent or th.SubText })
+		for _, c in ipairs(gearIcon:GetChildren()) do
+			if c:IsA("Frame") then
+				Util.Tween(c, 0.15, { BackgroundColor3 = active and th.Accent or th.SubText })
+			end
+		end
+	end
+	table.insert(self._OnTheme, function() paintGear(self.SettingsOpen) end)
+
+	function self:OpenSettings()
+		if self.SettingsOpen then return end
+		if not self.SettingsTab and self.BuildSettings then self:BuildSettings() end
+		if not self.SettingsPage then return end
+		self.SettingsOpen = true
+		self.PreviousTab = self.ActiveTab
+		if self.ActiveTab then self.ActiveTab.Page.Visible = false end
+		self.EmptyLabel.Visible = false
+		if self.SyncSettings then self:SyncSettings() end
+		local page = self.SettingsPage
+		page.Visible = true
+		page.Position = UDim2.fromOffset(0, 10)
+		Util.Tween(page, 0.25, { Position = UDim2.fromOffset(0, 0) })
+		paintGear(true)
+	end
+
+	function self:CloseSettings(skipRestore)
+		if not self.SettingsOpen then return end
+		self.SettingsOpen = false
+		self:EndChipPlacement()
+		if self.SettingsPage then self.SettingsPage.Visible = false end
+		paintGear(false)
+		if not skipRestore and self.PreviousTab then
+			self.PreviousTab:Select()
+		elseif not skipRestore and #self.Tabs == 0 then
+			self.EmptyLabel.Visible = true
+		end
+	end
+
+	function self:ToggleSettings()
+		if self.SettingsOpen then self:CloseSettings() else self:OpenSettings() end
 	end
 
 	function self:Toggle()
@@ -2610,14 +2931,25 @@ function MacLib:Window(config)
 		return MacLib:SetTheme(name)
 	end
 
+	if self.BuildSettings then pcall(function() self:BuildSettings() end) end
+
+	-- first run on this machine gets the changelog card, top right
+	if config.Changelog ~= false then
+		task.delay(0.7, function()
+			if MacLib.ShowChangelog then
+				pcall(function() MacLib:ShowChangelog(false) end)
+			end
+		end)
+	end
+
 	table.insert(MacLib.Windows, self)
 
 	-- entrance
 	root.Visible = true
 	main.BackgroundTransparency = 0
-	scale.Scale = 0.9
-	Util.Tween(scale, 0.42, { Scale = 1 }, Enum.EasingStyle.Back)
-	if blur then Util.Tween(blur, 0.4, { Size = 14 }) end
+	scale.Scale = self.UIScale * 0.9
+	Util.Tween(scale, 0.42, { Scale = self.UIScale }, Enum.EasingStyle.Back)
+	updateBlur()
 
 	return self
 end
@@ -2796,6 +3128,9 @@ function Window:Tab(cfg)
 	btn.MouseButton1Click:Connect(function() tab:Select() end)
 
 	function tab:Select()
+		if window.SettingsOpen and window.CloseSettings then
+			window:CloseSettings(true)
+		end
 		for _, other in ipairs(window.Tabs) do
 			if other ~= self and other.Selected then
 				other.Selected = false
@@ -3851,6 +4186,206 @@ function Section:Divider()
 end
 
 --=================================================================================================
+--  SETTINGS TAB
+--  A page with no sidebar button, built lazily on the first window. Every control writes
+--  straight to MacLib.Prefs, so choices follow the user into every script using MacLib.
+--=================================================================================================
+
+function Window:BuildSettings()
+	if self.SettingsTab then return self.SettingsTab end
+	local window = self
+	local prefs = MacLib.Prefs.All()
+
+	-- Elements fire their callback once for a non-nil Default. That is right for a script's
+	-- own controls, but here it would write the current values into prefs on first build and
+	-- permanently override whatever the script asked for. Nothing saves until the page is live.
+	local ready = false
+
+	local page = Util.Scrollbar(Util.New("ScrollingFrame", {
+		Name = "Page_Settings",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Visible = false,
+		ZIndex = 3,
+		Parent = window.Container,
+	}))
+	Util.Padding(page, 18, 18, 24, 18)
+	Util.List(page, 16)
+	window.SettingsPage = page
+
+	-- a Tab-shaped table so every Section/element helper works unchanged
+	local tab = setmetatable({
+		Window = window, Title = "Settings", Icon = "settings-minimalistic",
+		Sections = {}, Page = page, Selected = false,
+	}, Tab)
+	window.SettingsTab = tab
+
+	----------------------------------------------------------------------------------------------
+	-- hide button
+	----------------------------------------------------------------------------------------------
+	local hide = tab:Section({
+		Title = "Hide button",
+		Description = "The pill you tap to bring the window back after minimising.",
+	})
+
+	local placeBtn
+	local posDrop
+
+	local function setPlacing(on)
+		if on then
+			window:BeginChipPlacement()
+			if placeBtn then placeBtn:SetTitle("Done placing") end
+		else
+			window:EndChipPlacement()
+			if placeBtn then placeBtn:SetTitle("Drag to place") end
+		end
+	end
+
+	posDrop = hide:Dropdown({
+		Title = "Position",
+		Options = { "Bottom", "Top", "Custom" },
+		Default = prefs.HideButton or "Bottom",
+		Callback = function(mode)
+			if not ready then return end
+			MacLib.Prefs.Set("HideButton", mode)
+			window:ApplyChipPosition()
+			setPlacing(mode == "Custom")
+		end,
+	})
+
+	placeBtn = hide:Button({
+		Title = "Drag to place",
+		Description = "Shows the pill so you can drag it anywhere on screen.",
+		Callback = function()
+			if window.PlacingChip then
+				setPlacing(false)
+			else
+				posDrop:Set("Custom", true)
+				MacLib.Prefs.Set("HideButton", "Custom")
+				window:ApplyChipPosition()
+				setPlacing(true)
+			end
+		end,
+	})
+
+	hide:Paragraph({
+		Title = "Tip",
+		Description = "While placing, drag the pill anywhere you like. It is clamped to the screen "
+			.. "edges so it can never end up somewhere you cannot reach.",
+	})
+
+	----------------------------------------------------------------------------------------------
+	-- appearance
+	----------------------------------------------------------------------------------------------
+	local look = tab:Section({ Title = "Appearance" })
+
+	local themeDrop = look:Dropdown({
+		Title = "Theme",
+		Options = { "Dark", "Light" },
+		Default = MacLib.Theme.Name,
+		Callback = function(name)
+			if not ready then return end
+			MacLib:SetTheme(name)
+			MacLib.Prefs.Set("Theme", name)
+		end,
+	})
+
+	local accentDrop = look:Dropdown({
+		Title = "Accent colour",
+		Options = MacLib.AccentNames(),
+		Default = prefs.Accent or "Blue",
+		Callback = function(name)
+			if not ready then return end
+			local color = MacLib.AccentByName(name)
+			if color then
+				MacLib:SetAccent(color)
+				MacLib.Prefs.Set("Accent", name)
+			end
+		end,
+	})
+
+	local iconDrop = look:Dropdown({
+		Title = "Icon weight",
+		Description = "Solar ships six weights.",
+		Options = { "linear", "outline", "bold", "broken", "bold-duotone", "line-duotone" },
+		Default = prefs.IconStyle or window.IconStyle,
+		Callback = function(style)
+			if not ready then return end
+			MacLib.Icons.Style = style
+			window.IconStyle = style
+			MacLib.Prefs.Set("IconStyle", style)
+		end,
+	})
+
+	----------------------------------------------------------------------------------------------
+	-- window
+	----------------------------------------------------------------------------------------------
+	local win = tab:Section({ Title = "Window" })
+
+	local scaleSlider = win:Slider({
+		Title = "Interface scale",
+		Min = 80, Max = 120, Increment = 5,
+		Default = math.floor((tonumber(prefs.Scale) or 1) * 100 + 0.5),
+		Suffix = "%",
+		Callback = function(value)
+			if not ready then return end
+			window:SetScale(value / 100)
+			MacLib.Prefs.Set("Scale", value / 100)
+		end,
+	})
+
+	local keyBind = win:Keybind({
+		Title = "Toggle interface",
+		Description = "Hides and shows the window.",
+		Default = window.ToggleKey,
+		OnChanged = function(key)
+			if not ready then return end
+			window.ToggleKey = key
+			MacLib.Prefs.Set("ToggleKey", key and key.Name or nil)
+		end,
+	})
+
+	local blurToggle = win:Toggle({
+		Title = "Background blur",
+		Default = window.BlurEnabled,
+		Callback = function(on)
+			if not ready then return end
+			window:SetBlur(on)
+			MacLib.Prefs.Set("Blur", on)
+		end,
+	})
+
+	local recentreToggle = win:Toggle({
+		Title = "Recentre on open",
+		Description = "Snap the window back to the middle each time it is shown.",
+		Default = window.Recentre,
+		Callback = function(on)
+			if not ready then return end
+			window.Recentre = on
+			MacLib.Prefs.Set("Recentre", on)
+		end,
+	})
+
+	----------------------------------------------------------------------------------------------
+	-- keeps the controls honest when something is changed from outside this page
+	----------------------------------------------------------------------------------------------
+	function window:SyncSettings()
+		local p = MacLib.Prefs.All()
+		themeDrop:Set(MacLib.Theme.Name, true)
+		accentDrop:Set(p.Accent or "Blue", true)
+		iconDrop:Set(p.IconStyle or window.IconStyle, true)
+		posDrop:Set(p.HideButton or "Bottom", true)
+		scaleSlider:Set(math.floor((tonumber(p.Scale) or 1) * 100 + 0.5), true)
+		blurToggle:Set(window.BlurEnabled, true)
+		recentreToggle:Set(window.Recentre, true)
+		keyBind:Set(window.ToggleKey, true)
+	end
+
+	ready = true
+	return tab
+end
+
+--=================================================================================================
 --  NOTIFICATIONS
 --=================================================================================================
 
@@ -4032,6 +4567,258 @@ function Window:Notify(cfg)
 	return MacLib:Notify(cfg)
 end
 
+--=================================================================================================
+--  CHANGELOG CARD
+--  Same visual language as a notification, taller, pinned above them, and it stays put
+--  until dismissed. Shown once per version: edit MacLib.Changelog when you ship.
+--=================================================================================================
+
+MacLib.Changelog = {
+	Version = "1.1.0",
+	Name    = "The Less Limits Update",
+	Entries = {
+		{ Tag = "New",      Text = "Settings tab, opened with the gear in the title bar. Press it again to go back to the tab you were on." },
+		{ Tag = "New",      Text = "The hide pill can sit at the bottom, at the top, or anywhere you drag it." },
+		{ Tag = "New",      Text = "Preferences are saved and follow you into every script that uses MacLib." },
+		{ Tag = "New",      Text = "Interface scale, nine accent colours and a picker for the Solar icon weight." },
+		{ Tag = "New",      Text = "Toggle key, background blur and recentre-on-open are all configurable now." },
+		{ Tag = "Improved", Text = "Blur state is handled in one place, so it can no longer stay on over a hidden window." },
+	},
+}
+
+MacLib.ChangelogTags = {
+	New      = Color3.fromRGB( 48, 209,  88),
+	Improved = Color3.fromRGB( 10, 132, 255),
+	Fixed    = Color3.fromRGB(255, 189,  46),
+	Removed  = Color3.fromRGB(255,  85,  75),
+}
+
+local CHANGELOG_FILE = "MacLib/lastseen.txt"
+
+local function escapeRich(text)
+	text = tostring(text or "")
+	text = text:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
+	return text
+end
+
+--- True when this exact version has already been shown on this machine.
+function MacLib:HasSeenChangelog()
+	if not Env.HasFS then return false end
+	local ok, data = pcall(Env.readfile, CHANGELOG_FILE)
+	if not ok or type(data) ~= "string" then return false end
+	return (data:gsub("%s", "")) == tostring(MacLib.Changelog.Version)
+end
+
+function MacLib:MarkChangelogSeen()
+	if not Env.HasFS then return false end
+	local ok = pcall(function()
+		if (not Env.isfolder) or (not Env.isfolder("MacLib")) then
+			pcall(Env.makefolder, "MacLib")
+		end
+		Env.writefile(CHANGELOG_FILE, tostring(MacLib.Changelog.Version))
+	end)
+	return ok
+end
+
+--- Shows the card. Pass true to show it again even if it has been seen.
+function MacLib:ShowChangelog(force)
+	if not force then
+		if MacLib._ChangelogShown then return nil end
+		if MacLib:HasSeenChangelog() then
+			MacLib._ChangelogShown = true
+			return nil
+		end
+	end
+	MacLib._ChangelogShown = true
+	MacLib:MarkChangelogSeen()
+
+	ensureNotifications()
+	local theme = MacLib.Theme
+	local log = MacLib.Changelog
+
+	local slot = Util.New("Frame", {
+		Name = "ChangelogSlot",
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		LayoutOrder = -100,          -- always above any notifications
+		Parent = NotifHolder,
+	})
+	local card = Util.New("Frame", {
+		Name = "Changelog",
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundColor3 = theme.Popup,
+		BorderSizePixel = 0,
+		Parent = slot,
+		Theme = { BackgroundColor3 = "Popup" },
+	})
+	Util.Corner(12, card)
+	Util.Stroke(card, "PopupStroke", 1, 0.25)
+	Util.List(card, 0)
+
+	------------------------------------------------------------------ header
+	local header = Util.New("Frame", {
+		Name = "Header",
+		Size = UDim2.new(1, 0, 0, 46),
+		BackgroundTransparency = 1,
+		LayoutOrder = 1,
+		ZIndex = 2,
+		Parent = card,
+	})
+	Util.New("TextLabel", {
+		Size = UDim2.new(1, -110, 0, 16),
+		Position = UDim2.new(0, 15, 0, 11),
+		BackgroundTransparency = 1,
+		Text = "What's new",
+		TextSize = 13,
+		TextColor3 = theme.Text,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Weight = Enum.FontWeight.SemiBold,
+		ZIndex = 3,
+		Parent = header,
+		Theme = { TextColor3 = "Text" },
+	})
+	Util.New("TextLabel", {
+		Size = UDim2.new(1, -110, 0, 13),
+		Position = UDim2.new(0, 15, 0, 27),
+		BackgroundTransparency = 1,
+		Text = tostring(log.Name or log.Date or ""),
+		TextSize = 11,
+		TextColor3 = theme.Muted,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Weight = Enum.FontWeight.Regular,
+		ZIndex = 3,
+		Parent = header,
+		Theme = { TextColor3 = "Muted" },
+	})
+
+	local pill = Util.New("Frame", {
+		Name = "Version",
+		Size = UDim2.fromOffset(58, 21),
+		Position = UDim2.new(1, -15, 0, 13),
+		AnchorPoint = Vector2.new(1, 0),
+		BackgroundColor3 = theme.Accent,
+		BackgroundTransparency = 0.85,
+		BorderSizePixel = 0,
+		ZIndex = 3,
+		Parent = header,
+		Theme = { BackgroundColor3 = "Accent" },
+	})
+	Util.Corner(7, pill)
+	Util.New("TextLabel", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Text = "v" .. tostring(log.Version),
+		TextSize = 11,
+		TextColor3 = theme.Accent,
+		Weight = Enum.FontWeight.Bold,
+		ZIndex = 4,
+		Parent = pill,
+		Theme = { TextColor3 = "Accent" },
+	})
+
+	Util.New("Frame", {
+		Name = "Rule",
+		Size = UDim2.new(1, -30, 0, 1),
+		Position = UDim2.new(0, 15, 1, -1),
+		BackgroundColor3 = theme.Divider,
+		BorderSizePixel = 0,
+		ZIndex = 3,
+		Parent = header,
+		Theme = { BackgroundColor3 = "Divider" },
+	})
+
+	------------------------------------------------------------------ entries
+	local body = Util.New("Frame", {
+		Name = "Entries",
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		LayoutOrder = 2,
+		ZIndex = 2,
+		Parent = card,
+	})
+	Util.Padding(body, 12, 15, 12, 15)
+	Util.List(body, 9)
+
+	for i, entry in ipairs(log.Entries or {}) do
+		local tag = tostring(entry.Tag or "New")
+		local tagColor = MacLib.ChangelogTags[tag] or theme.Accent
+		Util.New("TextLabel", {
+			Name = "Entry" .. i,
+			Size = UDim2.new(1, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			BackgroundTransparency = 1,
+			RichText = true,
+			Text = string.format('<font color="#%s"><b>%s</b></font>  %s',
+				Util.Hex(tagColor), escapeRich(tag), escapeRich(entry.Text)),
+			TextSize = 12,
+			TextColor3 = theme.SubText,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Top,
+			TextWrapped = true,
+			Weight = Enum.FontWeight.Regular,
+			LayoutOrder = i,
+			ZIndex = 3,
+			Parent = body,
+			Theme = { TextColor3 = "SubText" },
+		})
+	end
+
+	------------------------------------------------------------------ footer
+	local footer = Util.New("Frame", {
+		Name = "Footer",
+		Size = UDim2.new(1, 0, 0, 48),
+		BackgroundTransparency = 1,
+		LayoutOrder = 3,
+		ZIndex = 2,
+		Parent = card,
+	})
+	local dismiss = Util.New("TextButton", {
+		Size = UDim2.new(1, -30, 0, 29),
+		Position = UDim2.new(0, 15, 0, 4),
+		BackgroundColor3 = theme.Accent,
+		AutoButtonColor = false,
+		Text = "Got it",
+		TextSize = 12,
+		TextColor3 = theme.AccentText,
+		BorderSizePixel = 0,
+		Weight = Enum.FontWeight.SemiBold,
+		ZIndex = 3,
+		Parent = footer,
+		Theme = { BackgroundColor3 = "Accent", TextColor3 = "AccentText" },
+	})
+	Util.Corner(8, dismiss)
+
+	------------------------------------------------------------------ behaviour
+	local closed = false
+	local function close()
+		if closed then return end
+		closed = true
+		Util.Tween(card, 0.2, { Position = UDim2.fromOffset(46, 0), BackgroundTransparency = 1 })
+		for _, d in ipairs(card:GetDescendants()) do
+			if d:IsA("TextLabel") or d:IsA("TextButton") then
+				Util.Tween(d, 0.18, { TextTransparency = 1, BackgroundTransparency = 1 })
+			elseif d:IsA("Frame") then
+				Util.Tween(d, 0.18, { BackgroundTransparency = 1 })
+			elseif d:IsA("UIStroke") then
+				Util.Tween(d, 0.18, { Transparency = 1 })
+			end
+		end
+		task.delay(0.26, function() slot:Destroy() end)
+	end
+
+	dismiss.MouseEnter:Connect(function() Util.Tween(dismiss, 0.12, { BackgroundTransparency = 0.15 }) end)
+	dismiss.MouseLeave:Connect(function() Util.Tween(dismiss, 0.16, { BackgroundTransparency = 0 }) end)
+	dismiss.MouseButton1Click:Connect(close)
+
+	card.Position = UDim2.fromOffset(46, 0)
+	Util.Tween(card, 0.36, { Position = UDim2.fromOffset(0, 0) }, Enum.EasingStyle.Quint)
+
+	return { Close = close, Instance = card, Slot = slot }
+end
 --=================================================================================================
 --  DIALOG  (macOS sheet)
 --=================================================================================================
